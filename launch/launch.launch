@@ -1,0 +1,12 @@
+<launch>
+
+  <!-- Elevation mapping node -->
+  <node pkg="path_planning" type="path_planning_node" name="path_planning_node" output="screen" />
+
+  <!-- Launch visualizations for the resulting elevation map -->
+  <!-- <include file="$(find elevation_mapping_ours)/launch/visualization.launch" /> -->
+
+  <!-- Launch RViz with the demo configuration -->
+  <node name="rviz" pkg="rviz" type="rviz" args="-d $(find path_planning)/rviz/rviz.rviz" />
+
+</launch>
