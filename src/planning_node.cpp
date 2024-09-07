@@ -57,10 +57,10 @@ int main(int argc, char** argv)
     SupportArea support_area(0.15, 0.1, 0.165, 0.165);
     PathPlanning path_planning(nh, map, support_area);
     path_planning.constructPlaneAwareMap();
-    path_planning.constructObstacleLayer(4);
+    path_planning.constructObstacleLayer(6);
     cv::imshow("obstacle_layer", path_planning.getObstacleLayer());
     cv::waitKey(0);
-    path_planning.testisFeasible();
+    // path_planning.testisFeasible();
     path_planning.checkFeasibleDirect();
 
     cv::imshow("getNanRegion", path_planning.getNanRegion());
@@ -68,5 +68,12 @@ int main(int argc, char** argv)
 
     cv::imshow("getFullRegion", path_planning.getFullRegion());
     cv::waitKey(0);
+
+    cv::imshow("getCheckMat", path_planning.getCheckMat());
+    cv::waitKey(0);
+
+    path_planning.clustering();
+    // path_planning.clusterFeasibleRegions();
+    LOG(INFO)<<"OUT";
     return 0;
 }

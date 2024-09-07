@@ -25,6 +25,9 @@ find_package(glog REQUIRED)
 find_package(OpenCV REQUIRED)
 find_package(PCL REQUIRED)
 find_package(OpenMP REQUIRED)
+find_package(Python3 COMPONENTS Interpreter Development REQUIRED)
+find_package(Python3 COMPONENTS NumPy)
+find_package(PythonLibs REQUIRED)
 ## Uncomment this if the package has a setup.py. This macro ensures
 ## modules and global scripts declared therein get installed
 ## See http://ros.org/doc/api/catkin/html/user_guide/setup_dot_py.html
@@ -128,6 +131,7 @@ include
   ${catkin_INCLUDE_DIRS}
   ${OpenCV_INCLUDE_DIRS}
   ${PCL_INCLUDE_DIRS}
+  ${PYTHON_INCLUDE_DIRS}
 )
 
 ## Declare a C++ library
@@ -180,6 +184,7 @@ target_link_libraries(planning
   glog::glog
   ${peac_LIBRARIES}
   ${PCL_LIBRARIES}
+  ${PYTHON_LIBRARIES}
   OpenMP::OpenMP_CXX
 )
 
