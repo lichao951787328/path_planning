@@ -1,7 +1,7 @@
 <launch>
 
   <!-- Elevation mapping node -->
-  <node pkg="path_planning" type="path_planning_node" name="path_planning_node" output="screen" />
+  <node pkg="path_planning" type="planning" name="planning" output="screen" />
 
   <!-- Launch visualizations for the resulting elevation map -->
   <!-- <include file="$(find elevation_mapping_ours)/launch/visualization.launch" /> -->

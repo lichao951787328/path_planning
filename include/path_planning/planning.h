@@ -10,7 +10,7 @@
 #include <list>
 #include <unordered_map>
 #include <unordered_set>
-
+#include <path_planning/nodes.h>
 // 先判断终点所在的平面，再根据连通性进行规划
 
 #define DEBUG
@@ -168,6 +168,7 @@ private:
     Graph plane_graph;
     // 通过判断外轮廓有没有内轮廓，并根据内轮廓的面积大小，判断这块区域是不是都是障碍区域
     cv::Mat obstacle_layer;
+    vector<Eigen::Vector2d> obstacles;
     double obstacle_inflation_radius;
     int full_size; // 支撑区域内cell数
     
@@ -181,25 +182,52 @@ private:
 
     vector<MergedDirectRegion> mdrs;
 
+    string package_path;
+    
     cv::Mat strictChecksMat;
     int strict_section;
     double obstacle_length;
     // 对于一个区域而言，如果里面有可通行方向较全向的像素，那么肯定会有可通行方向单一的像素。反之不成立
     // 为了方便筛选出这些区域，这一步很重要，但是由于check_Mat可能存在非常杂乱的情况，这可能不方便筛选
     // 为此，我们筛选出checks_Mat中通行性局限性更强的像素点，并对这些像素点进行聚类，分割出可通行区域和可通行方向。再将这些区域与checks_Mat内包含这些区域且相邻的像素点合并，得到真实的可通行区域块及可通行方向
+    cv::Point2f ray_Dir; // 终点像素方向
+
+    int map_size_; 
+    // Node start_, goal_;
+    Eigen::Vector3d start_, goal_;
+    grid_map::Index start_index_, goal_index_;
+    std::unordered_map<int, Node> sample_list_;  // set of sample nodes
+    int sample_num_;                             // max sample number
+    double max_dist_;                            // max distance threshold
+    double opti_sample_p_ = 0.05; 
+    double step = 0.4; // 或许在找时需要变化长度，因为不一定正好是0.4
 public:
-    PathPlanning(ros::NodeHandle & nodehand, grid_map::GridMap & map_, SupportArea support_area_);
+    PathPlanning(ros::NodeHandle & nodehand, grid_map::GridMap & map_, SupportArea support_area_, Eigen::Vector3d & start, Eigen::Vector3d & goal);
 
+    // Node _generateRandomNode();
+    // Node _findNearestPoint(std::unordered_map<int, Node>& list, const Node& node);
+    // bool plan(const Node& start, const Node& goal, std::vector<Node>& path, std::vector<Node>& expand);
+    // bool _isAnyObstacleInPath(const Node& n1, const Node& n2);
+    // bool _checkGoal(const Node& new_node);
+    // Node APF_newpoint(Node & nearest_point, Node & rand_point);
+    // std::vector<Node> _convertClosedListToPath(std::unordered_map<int, Node>& closed_list, const Node& start, const Node& goal);
+    // int node2Index(Node & n);
+    // Eigen::Vector2d repF();
     void constructPlaneAwareMap();
-
+    // void computeObstacles();
     void constructObstacleLayer(int chect_scope);
+    void computeRep();
+    std::pair<cv::Mat, cv::Mat> getSegMoreAndLess(cv::Mat region, cv::Mat goal_region, cv::Point2f Dir);
+    void goalDirectInImage(double yaw);
+    void showRepImage();
+    void showSAPFImage();
+    // bool isFeasible(grid_map::Index & index, double angle);
+    // bool isFeasibleNew(grid_map::Index & index, double angle);
 
-    bool isFeasible(grid_map::Index & index, double angle);
-    bool isFeasibleNew(grid_map::Index & index, double angle);
 
-    void checkFeasibleDirect();
+    // void checkFeasibleDirect();
 
-    bool getPoints(grid_map::Position TL, grid_map::Position TR, grid_map::Position BL, grid_map::Position BR, vector<Eigen::Vector3d> & return_points);
+    // bool getPoints(grid_map::Position TL, grid_map::Position TR, grid_map::Position BL, grid_map::Position BR, vector<Eigen::Vector3d> & return_points);
 
     /**
      * @brief 对不能全向通行的区域进行聚类，获得可行区域内可通行方向
@@ -207,12 +235,12 @@ public:
      * @return true 
      * @return false 
      */
-    bool clustering();
+    // bool clustering();
 
-    void clusterFeasibleRegions();
+    // void clusterFeasibleRegions();
 
     // 根据起点平面和终点平面确定到达终点的平面轨迹。分层引导规划，靠近子终点时以全局终点引导为主，根据前后平面序列来确定子终点，并圆滑一下
-    vector<int> getPlanePath(int start_plane, int goal_plane);
+    // vector<int> getPlanePath(int start_plane, int goal_plane);
 
     inline cv::Mat getObstacleLayer()
     {
@@ -238,7 +266,7 @@ public:
 
     // test
     
-    void testisFeasible();
+    // void testisFeasible();
 };
 
 

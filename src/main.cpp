@@ -285,9 +285,9 @@ int main(int argc, char** argv)
     // // 检查法向量的方向，默认朝上。即z>0
     for (int i = 0; i < pd.planes_info.size(); i++)
     {
-        if (pd.planes_info.at(i).first.z() < 0)
+        if (pd.planes_info.at(i).normal.z() < 0)
         {
-            pd.planes_info.at(i).first = - pd.planes_info.at(i).first;
+            pd.planes_info.at(i).normal = - pd.planes_info.at(i).normal;
         }
     }
     
@@ -296,7 +296,7 @@ int main(int argc, char** argv)
     for (int i = 0; i < pd.planes.size(); i++)
     {
         cv::imwrite("/home/lichao/catkin_pathplanning/src/path_planning/data/" + std::to_string(i) + ".png", pd.planes.at(i));
-        LOG(INFO)<<pd.planes_info.at(i).first.transpose()<<", "<<pd.planes_info.at(i).second.transpose();
+        LOG(INFO)<<pd.planes_info.at(i).normal.transpose()<<", "<<pd.planes_info.at(i).center.transpose();
     }
     
     // 根据平面检测结果给高程图赋值，使其成为plane-aware heightmap
@@ -412,7 +412,7 @@ int main(int argc, char** argv)
                                 if (!std::isnan(map["label"](ny, nx)))
                                 {
                                     int label_index = static_cast<int>(map["label"](ny, nx));
-                                    normals[label_index] = pd.planes_info.at(label_index).first;
+                                    normals[label_index] = pd.planes_info.at(label_index).normal;
                                 }
                             }
                         }
