@@ -6,8 +6,11 @@
 #include <chrono>
 #include <matplotlibcpp.h>
 #include <random>
-#include <path_planning/math_helper.h>
+#include <queue>
+// #include <path_planning/math_helper.h>
 #include <ros/package.h>
+#include <map>
+#include <limits>
 void initial_package_path(string package_name, string & package_path)
 {
   package_path = ros::package::getPath(package_name);
@@ -65,6 +68,7 @@ PathPlanning::PathPlanning(ros::NodeHandle & nodehand, grid_map::GridMap & map_,
     strict_section = 2;
     obstacle_length = 2;
     obstacle_inflation_radius = 0.5;
+    debug_image = cv::Mat(map.getSize().x(), map.getSize().y(), CV_8UC3, cv::Scalar(255, 255, 255));
 }
 
 pcl::PointCloud<pcl::PointXYZ> gridMap2Pointcloud(grid_map::GridMap & map)
@@ -135,12 +139,47 @@ void PathPlanning::constructPlaneAwareMap()
     LOG(INFO)<<"construct plane-aware map finish";
 }
 
+void PathPlanning::constructFullFeasibleRegion(double safe_length)
+{
+    full_feasible_region = cv::Mat::zeros(map.getSize().x(), map.getSize().y(), CV_8UC1);
+    int radius = safe_length / map.getResolution();
+    for (int i = 0; i < pd.planes.size(); i++)
+    {
+        cv::Mat image = pd.planes.at(i).clone();
+        cv::erode(image, image, cv::Mat(), cv::Point(-1, -1), radius);
+        full_feasible_region.setTo(255, image);
+    }
+    // #ifdef DEBUG
+    cv::imshow("full_feasible_region", full_feasible_region);
+    cv::waitKey(0);
+    // #endif
+}
+
+void PathPlanning::constructGoalVortexRegion()
+{
+    goal_vortex_region = cv::Mat::zeros(map.getSize()(1), map.getSize()(0), CV_8UC1);
+    if (cv::countNonZero(goal_obstacle) > 0)
+    {
+        cv::Mat element_1 = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(d_inf_rad*2 + 1, d_inf_rad*2 + 1), cv::Point(1, 1));
+        cv::Mat element_2 = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(d_safe_rad*2 + 1, d_safe_rad*2 + 1), cv::Point(1, 1));
+        cv::Mat mat_1, mat_2;
+        cv::dilate(goal_obstacle, mat_1, element_1);
+        cv::dilate(goal_obstacle, mat_2, element_2);
+        mat_1.setTo(0, mat_2);
+        goal_vortex_region = mat_1;
+    }
+    else
+    {
+        LOG(INFO)<<"do not have goal vortex region.";
+    }
+}
+
 void PathPlanning::constructObstacleLayer(int chect_scope)
 {
     obstacle_layer = cv::Mat::zeros(pd.result.size(), CV_8UC1);
     for (int i = 0; i < pd.planes.size(); i++)
     {
-        cv::Mat image = pd.planes.at(i);
+        cv::Mat image = pd.planes.at(i).clone();
         // cv::imshow("image", image);
         // cv::waitKey(0);
         // 存储轮廓的向量
@@ -360,7 +399,7 @@ std::pair<cv::Mat, cv::Mat> PathPlanning::getSegMoreAndLess(cv::Mat region, cv::
     // 表明可能是竖直方向
     if (std::abs(Dir.x) < 1e-4)
     {
-        LOG(INFO)<<"Dir.x is zero.";
+        // LOG(INFO)<<"Dir.x is zero.";
         std::priority_queue<cv_point_dis, std::vector<cv_point_dis>, cv_pointDisCompare> p_queue_more;
         std::priority_queue<cv_point_dis, std::vector<cv_point_dis>, cv_pointDisCompare> p_queue_less;
         // cv::Mat color_image = cv::Mat::zeros(map.getSize().x(), map.getSize().y(), CV_8UC3);
@@ -489,14 +528,14 @@ std::pair<cv::Mat, cv::Mat> PathPlanning::getSegMoreAndLess(cv::Mat region, cv::
         }
         else
         {
-            LOG(INFO)<<"IN REGION";
+            // LOG(INFO)<<"IN REGION";
             region.setTo(0, goal_region);
             // cv::imshow("region", region);
             // cv::waitKey(0);
             std::vector<std::vector<cv::Point>> single_contours;
             std::vector<cv::Vec4i> single_hierarchy;
             cv::findContours(region, single_contours, single_hierarchy, cv::RETR_CCOMP, cv::CHAIN_APPROX_NONE);
-            LOG(INFO)<<single_hierarchy[0][2];
+            // LOG(INFO)<<single_hierarchy[0][2];
             cv::Mat tmp_image = cv::Mat::zeros(obstacle_layer.size(), CV_8UC1);
             cv::drawContours(tmp_image, single_contours, 0, cv::Scalar(255), 1);
             // cv::imshow("tmp_image", tmp_image);
@@ -542,7 +581,7 @@ std::pair<cv::Mat, cv::Mat> PathPlanning::getSegMoreAndLess(cv::Mat region, cv::
             // cv::waitKey(0);
             if (single_hierarchy[0][2] == -1) // 没有内轮廓
             {
-                LOG(INFO)<<"no inliner";
+                // LOG(INFO)<<"no inliner";
                 int morethan_index1, morethan_index2;
                 if (p_queue_more.size() >= 2)
                 {
@@ -624,7 +663,7 @@ std::pair<cv::Mat, cv::Mat> PathPlanning::getSegMoreAndLess(cv::Mat region, cv::
             }
             else // 有内轮廓
             {
-                LOG(INFO)<<"INLINE";
+                // LOG(INFO)<<"INLINE";
                 int lessthan_index1 = p_queue_less.top().index;
                 int morethan_index1 = p_queue_more.top().index;
                 // 如果有内轮廓,从lessthan_index1 和 morethan_index1 往两侧扩展
@@ -1146,108 +1185,158 @@ void PathPlanning::showRepImage()
 //     matplotlibcpp::show();
 // }
 
-void PathPlanning::computeRep()
+void PathPlanning::computeObstacles()
 {
-    map.add("SAPF_X", 0);
-    map.add("SAPF_X_FLAG", 0);
-    map.add("SAPF_Y", 0);
-    map.add("SAPF_Y_FLAG", 0);
-
-    cv::Mat check_image = cv::Mat::zeros(obstacle_layer.size(), CV_8UC1);
-
-    // 如果有内轮廓，且与起点和终点不在一个平面上，那么该整个区域都为障碍
+    check_image = cv::Mat::zeros(obstacle_layer.size(), CV_8UC1);
     std::vector<std::vector<cv::Point>> out_contours;
     std::vector<cv::Vec4i> out_hierarchy;
-    // 可以把
     cv::findContours(obstacle_layer, out_contours, out_hierarchy, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_NONE);
-    vector<cv::Mat> hull_obstacles;
-    cv::Mat goal_obstacle = cv::Mat::zeros(obstacle_layer.size(), CV_8UC1);
-    int hull_index = 0;
-    for (auto & obstacle :  out_contours)
+    for (auto & contour :  out_contours)
     {
         std::vector<cv::Point> hull;
         // 对每个轮廓计算凸包
-        cv::convexHull(obstacle, hull);
+        cv::convexHull(contour, hull);
         // 使用pointPolygonTest判断点是否在凸包内
         double result = cv::pointPolygonTest(hull, cv::Point2f(goal_index_.y(), goal_index_.x()), false);
-        if (result < 0) // 不在凸包内
+        if (result < 0) // 不在凸包内的一般障碍
         {
-            cv::Mat hull_obstacle = cv::Mat::zeros(obstacle_layer.size(), CV_8UC1);
-            std::vector<std::vector<cv::Point>> hullContours = {hull};
-            cv::drawContours(hull_obstacle, hullContours, 0, cv::Scalar(255), cv::FILLED);
-            hull_obstacles.emplace_back(hull_obstacle);
-            LOG(INFO)<<"show hull obstacle";
-            cv::imshow("hull_obstacle", hull_obstacle);
-            cv::waitKey(0);
-            check_image.setTo(255, hull_obstacle);
-            LOG(INFO)<<"check obstacle";
-            cv::imshow("check_image", check_image);
-            cv::waitKey(0);
+            cv::Mat obstacle = cv::Mat::zeros(obstacle_layer.size(), CV_8UC1);
+            // 对一障碍，不要凸包也可以
+            std::vector<std::vector<cv::Point>> Contours = {contour};
+            cv::drawContours(obstacle, Contours, 0, cv::Scalar(255), cv::FILLED);
+            obstacles.emplace_back(obstacle);
+            // LOG(INFO)<<"show obstacle";
+            // cv::imshow("obstacle", obstacle);
+            // cv::waitKey(0);
+            check_image.setTo(255, obstacle);
+            // LOG(INFO)<<"check obstacle";
+            // cv::imshow("check_image_3", check_image);
+            // cv::waitKey(0);
             // 为每个其他障碍添加标记
-            map.add("SAPF_OBSTACLE_" + std::to_string(hull_index), 0);
+            // map.add("SAPF_OBSTACLE_" + std::to_string(hull_index), 0);
         }
         else
         {
             // 如果有终点在障碍内的情况，添加此处标记
-            map.add("SAPF_OBSTACLE_GOAL", 0);
-            cv::Mat mask = cv::Mat::zeros(obstacle_layer.size(), CV_8UC1);
-            std::vector<std::vector<cv::Point>> Contours = {obstacle};
-            cv::drawContours(mask, Contours, 0, cv::Scalar(255), cv::FILLED);
-            goal_obstacle = mask;
-            LOG(INFO)<<"mask obstacle";
-            cv::imshow("mask", mask);
-            cv::waitKey(0);
+            // map.add("SAPF_OBSTACLE_GOAL", 0);
+            goal_obstacle = cv::Mat::zeros(obstacle_layer.size(), CV_8UC1);
+            std::vector<std::vector<cv::Point>> Contours = {contour};
+            cv::drawContours(goal_obstacle, Contours, 0, cv::Scalar(255), cv::FILLED);
+            // LOG(INFO)<<"mask obstacle";
+            // cv::imshow("goal_obstacle", goal_obstacle);
+            // cv::waitKey(0);
 
             // 这样将凹区域也涂上，表明内部也不会被赋值
             // cv::convexHull(obstacle, hull);
             std::vector<std::vector<cv::Point>> hullContours = {hull};
             cv::drawContours(check_image, hullContours, 0, cv::Scalar(255), cv::FILLED);
-            // check_image.setTo(255, goal_obstacle);
-            LOG(INFO)<<"check obstacle";
-            cv::imshow("check_image", check_image);
-            cv::waitKey(0);
+
+            // 将凸区域的部分障碍部分去除，得到内部区域
+            cv::Mat hull_region = cv::Mat::zeros(obstacle_layer.size(), CV_8UC1);
+            cv::drawContours(hull_region, hullContours, 0, cv::Scalar(255), cv::FILLED);
+            cv::drawContours(hull_region, Contours, 0, cv::Scalar(0), cv::FILLED);
+
+            cv::Mat hull_contour = cv::Mat::zeros(obstacle_layer.size(), CV_8UC1);
+            cv::drawContours(hull_contour, hullContours, -1, 255, 1);
+            
+            cv::Mat line = cv::Mat::zeros(goal_obstacle.size(), CV_8UC1);
+            cv::bitwise_and(hull_region, hull_contour, line);
+
+            // cv::imshow("line", line);
+            // cv::waitKey(0);
+            cv::Moments m = cv::moments(line, true);
+            double cX = m.m10 / m.m00;
+            double cY = m.m01 / m.m00;
+            cv::Point2f centroid(cX, cY);
+            std::vector<cv::Point> white_points;
+            cv::findNonZero(line, white_points);
+            float radius = -1;
+            for (auto & cv_point : white_points)
+            {
+                cv::Point2f cv_point_(cv_point.x, cv_point.y);
+                cv::Point2f normal = cv_point_ - centroid;
+                float length = cv::norm(normal);
+                if (length > radius)
+                {
+                    radius = length;
+                }
+            }
+            cv::circle(line, centroid, radius, cv::Scalar(255), -1);
+            check_image.setTo(255, line);
+            // cv::imshow("check_image_5", check_image);
+            // cv::waitKey(0);
         }
     }
-
-    bool goal_obstacle_flag = cv::countNonZero(goal_obstacle) != 0;
-
-    double d_safe = 0.6;
-    double d_vort = 1.5;
-    double d_inf = 2*d_vort - d_safe;
-    double d_noinflu = d_inf + 0.6;
-
-    int d_safe_rad = d_safe/map.getResolution();
-    int d_vort_rad = d_vort/map.getResolution();
-    int d_inf_rad = d_inf/map.getResolution();
-    int d_noinflu_rad = d_noinflu/map.getResolution();
-
-    cv::Mat goal_obstacle_bk = goal_obstacle.clone();
-
-    cv::Mat element = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(3, 3), cv::Point(1, 1));
-
-    // 生成一个覆盖终点的区域，
-    std::vector<std::vector<cv::Point>> raw_contours;
-    std::vector<cv::Vec4i> raw_hierarchy;
-    cv::findContours(goal_obstacle_bk, raw_contours, raw_hierarchy, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_NONE);
-    std::vector<cv::Point> hull;
-    cv::convexHull(raw_contours[0], hull);
-    cv::Mat hull_mat = cv::Mat::zeros(obstacle_layer.size(), CV_8UC1);
-    std::vector<std::vector<cv::Point>> hullContours = {hull};
-    cv::drawContours(hull_mat, hullContours, 0, cv::Scalar(255), cv::FILLED);
-    LOG(INFO)<<"HULL REGION";
-    cv::imshow("hull_region", hull_mat);
+    cv::imshow("check_image", check_image);
     cv::waitKey(0);
-    // cv::Mat canve_mat = cv::Mat::zeros(obstacle_layer.size(), CV_8UC1);
-    cv::drawContours(hull_mat, raw_contours, 0, cv::Scalar(0), cv::FILLED);
-    cv::erode(hull_mat, hull_mat, element);// 少一个像素
-    LOG(INFO)<<"CANV";
-    cv::imshow("hull_region", hull_mat);
-    cv::waitKey(0);
-    // map.add("GOAL_SAFE_FLAG", 0);
-
-    if (goal_obstacle_flag)
+    // 为障碍添加层
+    if (cv::countNonZero(goal_obstacle) > 0)
     {
-        map.add("GOAL_SAFE_FLAG", 0);
+        map.add("obstacle_goal_X", 0);
+        map.add("obstacle_goal_Y", 0);
+        map.add("obstacle_goal_FLAG", 0);
+    }
+    for (int i = 0; i < obstacles.size(); i++)
+    {
+        map.add("obstacle_"+std::to_string(i) + "_X", 0);
+        map.add("obstacle_"+std::to_string(i) + "_Y", 0);
+        map.add("obstacle_"+std::to_string(i) + "_FLAG", 0);
+    }
+}
+
+void PathPlanning::computeRadius(double d_safe_, double d_vort_, double d_noinflu_offset_)
+{
+    d_safe = d_safe_;
+    d_vort = d_vort_;
+    d_noinflu_offset = d_noinflu_offset_;
+    CHECK(d_safe > 0);
+    CHECK(d_vort > d_safe);
+    CHECK(d_noinflu_offset > 0);
+
+    // double d_safe = 0.6;
+    // double d_vort = 1.5;
+    d_inf = 2*d_vort - d_safe;
+    d_noinflu = d_inf + d_noinflu_offset;
+
+    d_safe_rad = d_safe/map.getResolution();
+    d_vort_rad = d_vort/map.getResolution();
+    d_inf_rad = d_inf/map.getResolution();
+    d_noinflu_rad = d_noinflu/map.getResolution();
+    LOG(INFO)<<d_safe<<" "<<d_vort<<" "<<d_noinflu_offset<<" "<<d_inf<<" "<<d_noinflu;
+    LOG(INFO)<<d_safe_rad<<" "<<d_vort_rad<<" "<<d_inf_rad<<" "<<d_noinflu_rad;
+}
+
+// 对goalregion和非goalregion内的斥力需要使用不同参数
+// 非goalregion的距离参数应该更小，但是goalregion的距离参数更大
+void PathPlanning::computeRepObstacleGoal()
+{
+    if (cv::countNonZero(goal_obstacle) > 0)
+    {
+        string obstacle_goal_flag = "obstacle_goal_FLAG";
+        string x_obstacle_goal = "obstacle_goal_X";
+        string y_obstacle_goal = "obstacle_goal_Y";
+        cv::Mat element = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(3, 3), cv::Point(1, 1));
+
+        auto goal_obstacle_bk = goal_obstacle.clone();
+        std::vector<std::vector<cv::Point>> raw_contours;
+        std::vector<cv::Vec4i> raw_hierarchy;
+        cv::findContours(goal_obstacle_bk, raw_contours, raw_hierarchy, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_NONE);
+        std::vector<cv::Point> hull;
+        cv::convexHull(raw_contours[0], hull);
+        cv::Mat hull_mat = cv::Mat::zeros(obstacle_layer.size(), CV_8UC1);
+        std::vector<std::vector<cv::Point>> hullContours = {hull};
+        // hull_mat 是凸区域
+        cv::drawContours(hull_mat, hullContours, 0, cv::Scalar(255), cv::FILLED);
+        // LOG(INFO)<<"HULL REGION";
+        // cv::imshow("hull_region", hull_mat);
+        // cv::waitKey(0);
+        // cv::Mat canve_mat = cv::Mat::zeros(obstacle_layer.size(), CV_8UC1);
+        // 将凸区域的部分障碍部分去除，得到内部区域
+        cv::drawContours(hull_mat, raw_contours, 0, cv::Scalar(0), cv::FILLED);
+        // 内部区域再腐蚀一次
+        cv::erode(hull_mat, hull_mat, element);
+        // 每3层，显示一次
+        std::vector<double> x_start, y_start, u, v;
         for (int inflation_radius = 1; inflation_radius <= d_noinflu_rad; inflation_radius++)
         {
             double d = map.getResolution() * (inflation_radius);
@@ -1273,9 +1362,22 @@ void PathPlanning::computeRep()
             {
                 r = 3.1415926 * (1 - d_rel);
             }
+
+            double F_SAPF;
+            if (d <= d_noinflu)
+            {
+                F_SAPF = goal_obstacle_cof * (1/(d) - 1/d_noinflu) * (1/(d_noinflu * d_noinflu));
+            }
+            else
+            {
+                F_SAPF = 0;
+            }
+            // LOG(INFO)<<"F_SAPF: "<<F_SAPF;
             cv::dilate(goal_obstacle, goal_obstacle, element);
-            cv::imshow("goal_obstacle", goal_obstacle);
-            cv::waitKey(0);
+            // cv::imshow("goal_obstacle", goal_obstacle);
+            // cv::waitKey(0);
+            // cv::imshow("check_image", check_image);
+            // cv::waitKey(0);
             std::vector<std::vector<cv::Point>> single_contours;
             std::vector<cv::Vec4i> single_hierarchy;
             cv::findContours(goal_obstacle, single_contours, single_hierarchy, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_NONE);
@@ -1286,10 +1388,10 @@ void PathPlanning::computeRep()
             cv::Mat other_image = cv::Mat::zeros(map.getSize(). x(), map.getSize().y(), CV_8UC1);
             if (inflation_radius <= d_safe_rad || inflation_radius > d_inf_rad)
             {
-                LOG(INFO)<<"GENERAL DORECT";
+                // LOG(INFO)<<"GENERAL DORECT";
                 cv::Mat RefImage = cv::Mat::zeros(map.getSize(). x(), map.getSize().y(), CV_8UC1);
-                cv::Mat contour_image = cv::Mat::zeros(map.getSize(). x(), map.getSize().y(), CV_8UC1);
-                std::vector<double> x_start, y_start, u, v;
+                // cv::Mat contour_image = cv::Mat::zeros(map.getSize(). x(), map.getSize().y(), CV_8UC1);
+                // std::vector<double> x_start, y_start, u, v;
                 for (size_t i = 0; i < single_contours[0].size(); i++) 
                 {
                     cv::Point2f pt1 = single_contours[0][i];
@@ -1302,52 +1404,29 @@ void PathPlanning::computeRep()
                     {
                         normal /= length;  
                     }
-                    // LOG(INFO)<<"normal: "<<normal;
-                    // if (check_image.at<uchar>(pt1) != 255)
-                    // {
-                    //     grid_map::Index index(pt1.y, pt1.x);
-                    //     if (map[hull_obstacle_string](index.x(), index.y()) == 0)
-                    //     {
-                    //         map["SAPF_X"](index.x(), index.y()) += normal.y;
-                    //         map["SAPF_Y"](index.x(), index.y()) += normal.x;
-                    //         if (i%10 == 0)
-                    //         {
-                    //             cv::Point start(pt1.x, pt1.y);
-                    //             cv::Point end(start.x + map["SAPF_X"](index.x(), index.y()) * 5, start.y + map["SAPF_Y"](index.x(), index.y()) * 5);
-                    //             cv::arrowedLine(RefImage, start, end, cv::Scalar(255), 2, 8, 0, 0.1);
-                    //             grid_map::Position p2;
-                    //             if (map.getPosition(index, p2))
-                    //             {
-                    //                 x_start.emplace_back(p2.x());
-                    //                 y_start.emplace_back(p2.y());
-                    //                 u.emplace_back(map["SAPF_X"](index.x(), index.y()));
-                    //                 v.emplace_back(map["SAPF_Y"](index.x(), index.y()));
-                    //             }
-                    //         }
-                    //         map[hull_obstacle_string](index.x(), index.y()) = 1;
-                    //     }
-                    // }
-
+                    
+                    cv::Point2f F_SAPF_V = F_SAPF * normal;
 
                     // 在 cv::Point2f 中，第一个元素代表列（也就是 X 方向），第二个元素代表行（Y 方向）
                     if (check_image.at<uchar>(pt1) != 255)
                     {
+                        
                         // 通过像素坐标获得地图index坐标 还需要乘以本身的力
                         grid_map::Index index(pt1.y, pt1.x);
-                        if (map["GOAL_SAFE_FLAG"](index.x(), index.y()) == 0)
+                        if (map[obstacle_goal_flag](index.x(), index.y()) == 0)
                         {
-                            map["GOAL_SAFE_FLAG"](index.x(), index.y()) = 1;
-                            map["SAPF_X"](index.x(), index.y()) += normal.y;
-                            // map["SAPF_X_FLAG"](index.x(), index.y()) = 1;
-                            map["SAPF_Y"](index.x(), index.y()) += normal.x; 
-                            // map["SAPF_Y_FLAG"](index.x(), index.y()) = 1;
+                            
+                            map[x_obstacle_goal](index.x(), index.y()) += F_SAPF_V.y;
+                            map[y_obstacle_goal](index.x(), index.y()) += F_SAPF_V.x;
+                            // map[x_obstacle_goal](index.x(), index.y()) += normal.y; 
+                            // map[y_obstacle_goal](index.x(), index.y()) += normal.x; 
                             // 表明这个栅格已经被goal所在的障碍赋上值
-                            map["SAPF_OBSTACLE_GOAL"](index.x(), index.y()) = 1;
+                            map[obstacle_goal_flag](index.x(), index.y()) = 1;
 
-                            if (i%10 == 0)
+                            if (i%10 == 0 && inflation_radius%8 == 0)
                             {
                                 cv::Point start(pt1.x, pt1.y);
-                                cv::Point end(start.x + map["SAPF_X"](index.x(), index.y()) * 5, start.y + map["SAPF_Y"](index.x(), index.y()) * 5);
+                                cv::Point end(start.x + map[x_obstacle_goal](index.x(), index.y()) * 5, start.y + map[y_obstacle_goal](index.x(), index.y()) * 5);
                                 cv::arrowedLine(RefImage, start, end, cv::Scalar(255), 2, 8, 0, 0.1);
                                 // LOG(INFO)<<"normal: "<<normal;   
                                 grid_map::Position p2;
@@ -1357,38 +1436,30 @@ void PathPlanning::computeRep()
                                     x_start.emplace_back(p2.x());
                                     y_start.emplace_back(p2.y());
                                     // LOG(INFO)<<map["SAPF_X"](index.x(), index.y())<<" "<<map["SAPF_Y"](index.x(), index.y());
-                                    u.emplace_back(map["SAPF_X"](index.x(), index.y()));
-                                    v.emplace_back(map["SAPF_Y"](index.x(), index.y()));
+                                    u.emplace_back(map[x_obstacle_goal](index.x(), index.y()));
+                                    v.emplace_back(map[y_obstacle_goal](index.x(), index.y()));
                                 }                
                             }
-                        }                  
-                        // map["SAPF_X"](index.x(), index.y()) += normal.x;
-                        // // map["SAPF_X_FLAG"](index.x(), index.y()) = 1;
-                        // map["SAPF_Y"](index.x(), index.y()) += normal.y; 
-                        // // map["SAPF_Y_FLAG"](index.x(), index.y()) = 1;
-                        // // 表明这个栅格已经被goal所在的障碍赋上值
-                        // map["GOAL_SAFE_FLAG"](index.x(), index.y()) = 1;
-                        // contour_image.at<uchar>(pt1) = 255;
-                        
-                        
+                        }
                     } 
                 }
-                matplotlibcpp::quiver(x_start, y_start, u, v);
-                matplotlibcpp::axis("equal");  
-                matplotlibcpp::show(); 
-                // cv::imshow("other_image", other_image);
-                // cv::waitKey(0);     
-                // // cv::imwrite("/home/lichao/catkin_pathplanning/src/path_planning/data/RefImage.png", RefImage);
-                // cv::imshow("contour_image", contour_image);
+                // matplotlibcpp::quiver(x_start, y_start, u, v);
+                // matplotlibcpp::axis("equal");  
+                // matplotlibcpp::show(); 
+                // // cv::imshow("other_image", other_image);
+                // // cv::waitKey(0);     
+                // // // cv::imwrite("/home/lichao/catkin_pathplanning/src/path_planning/data/RefImage.png", RefImage);
+                // // cv::imshow("contour_image", contour_image);
+                // // cv::waitKey(0);
+                // cv::imshow("RefImage", RefImage);
                 // cv::waitKey(0);
-                cv::imshow("RefImage", RefImage);
-                cv::waitKey(0);
                 // 将地图内的障碍斥力部分转为凸向显示，并标记斥力方向
                 // showRepImage();
             }
             else
             {
-                LOG(INFO)<<"NONGENERAL DORECT";
+                // LOG(INFO)<<"IN V";
+                // LOG(INFO)<<"NONGENERAL DORECT";
                 // cv::imshow("goal_obstacle NONGENERAL", goal_obstacle);
                 // cv::waitKey(0);
                 // cv::imshow("hull_mat NONGENERAL", hull_mat);
@@ -1415,10 +1486,10 @@ void PathPlanning::computeRep()
                     clock_wise_mat = segMats.first;
                     counter_clock_wise_mat = segMats.second;
                 }
-                cv::imshow("clock_wise_mat", clock_wise_mat);
-                cv::waitKey(0);
-                cv::imshow("counter_clock_wise_mat", counter_clock_wise_mat);
-                cv::waitKey(0);
+                // cv::imshow("clock_wise_mat", clock_wise_mat);
+                // cv::waitKey(0);
+                // cv::imshow("counter_clock_wise_mat", counter_clock_wise_mat);
+                // cv::waitKey(0);
                 // cv::imshow("goal_obstacle_xx_", goal_obstacle);
                 // cv::waitKey(0);
                 // cv::imshow("less_image_1", segMats.first);
@@ -1426,8 +1497,8 @@ void PathPlanning::computeRep()
                 // cv::imshow("more_image_1", segMats.second);
                 // cv::waitKey(0);
                 cv::Mat RefImage = cv::Mat::zeros(map.getSize(). x(), map.getSize().y(), CV_8UC1);
-                cv::Mat contour_image = cv::Mat::zeros(map.getSize(). x(), map.getSize().y(), CV_8UC1);
-                std::vector<double> x_start, y_start, u, v;
+                // cv::Mat contour_image = cv::Mat::zeros(map.getSize(). x(), map.getSize().y(), CV_8UC1);
+                // std::vector<double> x_start, y_start, u, v;
                 for (size_t i = 0; i < single_contours[0].size(); i++) 
                 {
                     cv::Point2f pt1 = single_contours[0][i];
@@ -1451,23 +1522,25 @@ void PathPlanning::computeRep()
                         normal_adj.x = cos(r)*normal.x - sin(r)*normal.y;
                         normal_adj.y = sin(r)*normal.x + cos(r)*normal.y;
                     }
-                    
+                    cv::Point2f F_SAPF_V = F_SAPF * normal_adj;
                     if (check_image.at<uchar>(pt1) != 255)
                     {
                         grid_map::Index index(pt1.y, pt1.x);
                         // 只有这个点没有被赋值，才能行
-                        if (map["SAPF_OBSTACLE_GOAL"](index.x(), index.y()) == 0)
+                        if (map[obstacle_goal_flag](index.x(), index.y()) == 0)
                         {
-                            map["SAPF_X"](index.x(), index.y()) += normal_adj.y;
-                            // map["SAPF_X_FLAG"](index.x(), index.y()) = 1;
-                            map["SAPF_Y"](index.x(), index.y()) += normal_adj.x; 
-                            map["SAPF_OBSTACLE_GOAL"](index.x(), index.y()) = 1;
-                            contour_image.at<uchar>(pt1) = 255;
+                            
+                            // map[x_obstacle_goal](index.x(), index.y()) += normal_adj.y;
+                            // map[y_obstacle_goal](index.x(), index.y()) += normal_adj.x; 
+                            map[x_obstacle_goal](index.x(), index.y()) += F_SAPF_V.y;
+                            map[y_obstacle_goal](index.x(), index.y()) += F_SAPF_V.x; 
+                            map[obstacle_goal_flag](index.x(), index.y()) = 1;
+                            // contour_image.at<uchar>(pt1) = 255;
                             // map["SAPF_Y_FLAG"](index.x(), index.y()) = 1;
-                            if (i%10 == 0)
+                            if (i%10 == 0 && inflation_radius%8 == 0)
                             {
                                 cv::Point start(pt1.x, pt1.y);
-                                cv::Point end(start.x + map["SAPF_X"](index.x(), index.y()) * 5, start.y + map["SAPF_Y"](index.x(), index.y()) * 5);
+                                cv::Point end(start.x + map[x_obstacle_goal](index.x(), index.y()) * 5, start.y + map[y_obstacle_goal](index.x(), index.y()) * 5);
                                 cv::arrowedLine(RefImage, start, end, cv::Scalar(255), 2, 8, 0, 0.1);
                                 // LOG(INFO)<<"normal: "<<normal;   
                                 grid_map::Position p2;
@@ -1476,36 +1549,60 @@ void PathPlanning::computeRep()
                                     // LOG(INFO)<<"p2: "<<p2.transpose();
                                     x_start.emplace_back(p2.x());
                                     y_start.emplace_back(p2.y());
-                                    u.emplace_back(map["SAPF_X"](index.x(), index.y()));
-                                    v.emplace_back(map["SAPF_Y"](index.x(), index.y()));
+                                    u.emplace_back(map[x_obstacle_goal](index.x(), index.y()));
+                                    v.emplace_back(map[y_obstacle_goal](index.x(), index.y()));
                                 }
                             }
                                                 
                         }
                     }
                 }   
-                matplotlibcpp::quiver(x_start, y_start, u, v);
-                matplotlibcpp::axis("equal");  
-                matplotlibcpp::show();    
-                // cv::imshow("contour_image", contour_image);
+                // matplotlibcpp::quiver(x_start, y_start, u, v);
+                // matplotlibcpp::axis("equal");  
+                // matplotlibcpp::show();    
+                // // cv::imshow("contour_image", contour_image);
+                // // cv::waitKey(0);
+                // cv::imshow("RefImage", RefImage);
                 // cv::waitKey(0);
-                cv::imshow("RefImage", RefImage);
-                cv::waitKey(0);
                 // cv::imshow("goal_obstacle__", goal_obstacle);
                 // cv::waitKey(0);
                 // showRepImage();
             }
         }
+        matplotlibcpp::quiver(x_start, y_start, u, v);
+        matplotlibcpp::axis("equal");  
+        matplotlibcpp::show(); 
     }
-    
-    return;
-    LOG(INFO)<<"GENERAL OBSTACLE";
-    for (int i = 0; i < hull_obstacles.size(); i++)
+}
+
+void PathPlanning::computeRepObstacle()
+{
+    // cv::Mat element_ = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(3, 3), cv::Point(1, 1));
+    cv::Mat element = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(3, 3));
+    for (int i = 0; i < obstacles.size(); i++)
     {
-        string hull_obstacle_string = "SAPF_OBSTACLE_" + std::to_string(i);
-        cv::Mat obstacle = hull_obstacles.at(i).clone();
+        string hull_obstacle_string = "obstacle_"+std::to_string(i) + "_FLAG";
+        string x_sapf = "obstacle_"+std::to_string(i) + "_X";
+        string y_sapf = "obstacle_"+std::to_string(i) + "_Y";
+        cv::Mat obstacle = obstacles.at(i).clone();
+
+        // 形态学闭运算将直角变成圆角
+        // cv::morphologyEx(obstacle, obstacle, cv::MORPH_CLOSE, element);
+
+        std::vector<double> x_start, y_start, u, v;
+        cv::Mat contour = cv::Mat::zeros(obstacle_layer.size(), CV_8UC1);
         for (int inflation_radius = 1; inflation_radius <= d_noinflu_rad; inflation_radius++)
         {
+            double d = map.getResolution() * (inflation_radius);
+            double F_SAPF;
+            if (d <= d_noinflu)
+            {
+                F_SAPF = gen_obstacle_cof * (1/(d) - 1/d_noinflu) * (1/(d_noinflu * d_noinflu));
+            }
+            else
+            {
+                F_SAPF = 0;
+            }
             cv::dilate(obstacle, obstacle, element);
             // cv::imshow("obstacle", obstacle);
             // cv::waitKey(0);
@@ -1514,42 +1611,57 @@ void PathPlanning::computeRep()
             cv::findContours(obstacle, single_contours, single_hierarchy, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_NONE);
             if (inflation_radius <= d_safe_rad || inflation_radius >= d_inf_rad)
             {
-                LOG(INFO)<<"GENERAL DIRECT";
+                // LOG(INFO)<<"GENERAL DIRECT";
                 cv::Mat RefImage = cv::Mat::zeros(map.getSize().x(), map.getSize().y(), CV_8UC1);
-                std::vector<double> x_start, y_start, u, v;
+                
 
                 // 初始化随机数生成器
-                std::random_device rd;   // 用于生成种子
-                std::mt19937 gen(rd());  // 使用Mersenne Twister算法生成随机数
+                // std::random_device rd;   // 用于生成种子
+                // std::mt19937 gen(rd());  // 使用Mersenne Twister算法生成随机数
+                // // 定义一个均匀分布范围 [20, 25]
+                // std::uniform_int_distribution<> distr(20, 25);
 
-                // 定义一个均匀分布范围 [20, 25]
-                std::uniform_int_distribution<> distr(55, 60);
-
-                // 生成一个随机数
-                int random_number = distr(gen);
+                // // 生成一个随机数
+                // int random_number = distr(gen);
+                // cv::Mat contour = cv::Mat::zeros(obstacle_layer.size(), CV_8UC1);
+                // std::vector<std::vector<cv::Point>> tmp_contours = {single_contours[0]};
+                // cv::drawContours(contour, tmp_contours, 0, cv::Scalar(255, 255, 255), 1);
+                
                 for (size_t i = 0; i < single_contours[0].size(); i++) 
                 {
+                    
                     cv::Point2f pt1 = single_contours[0][i];
                     cv::Point2f pt2 = single_contours[0][(i + 1) % single_contours[0].size()];
                     cv::Point2f tangent = pt2 - pt1;
                     cv::Point2f normal = cv::Point2f(tangent.y, -tangent.x);
+
+                    // cv::Mat circle_mat = contour.clone();
+                    // cv::circle(circle_mat, single_contours[0][i], 5, cv::Scalar(0, 255, 0), 2);
+                    // cv::imshow("circle_mat", circle_mat);
+                    // cv::waitKey(0);
+                    // LOG(INFO)<<"normal: "<<normal;
+
                     float length = cv::norm(normal);
                     if (length > 0) 
                     {
                         normal /= length;  
                     }
+                    cv::Point2f F_SAPF_V = F_SAPF * normal;
                     // 通过像素坐标获得地图index坐标 还需要乘以本身的力
                     if (check_image.at<uchar>(pt1) != 255)
                     {
                         grid_map::Index index(pt1.y, pt1.x);
                         if (map[hull_obstacle_string](index.x(), index.y()) == 0)
                         {
-                            map["SAPF_X"](index.x(), index.y()) += normal.y;
-                            map["SAPF_Y"](index.x(), index.y()) += normal.x;  
-                            if (i%random_number == 0)
+                            // contour.at<uchar>(single_contours[0][i]) = 255;
+                            // map[x_sapf](index.x(), index.y()) += normal.y;
+                            // map[y_sapf](index.x(), index.y()) += normal.x;  
+                            map[x_sapf](index.x(), index.y()) += F_SAPF_V.y;
+                            map[y_sapf](index.x(), index.y()) += F_SAPF_V.x;
+                            if (i%10 == 0 && inflation_radius%8 == 0)
                             {
                                 cv::Point start(pt1.x, pt1.y);
-                                cv::Point end(start.x + map["SAPF_X"](index.x(), index.y()) * 5, start.y + map["SAPF_Y"](index.x(), index.y()) * 5);
+                                cv::Point end(start.x + map[x_sapf](index.x(), index.y()) * 5, start.y + map[y_sapf](index.x(), index.y()) * 5);
                                 cv::arrowedLine(RefImage, start, end, cv::Scalar(255), 2, 8, 0, 0.1);
 
                                 grid_map::Position p2;
@@ -1557,33 +1669,36 @@ void PathPlanning::computeRep()
                                 {
                                     x_start.emplace_back(p2.x());
                                     y_start.emplace_back(p2.y());
-                                    u.emplace_back(map["SAPF_X"](index.x(), index.y()));
-                                    v.emplace_back(map["SAPF_Y"](index.x(), index.y()));
+                                    u.emplace_back(map[x_sapf](index.x(), index.y()));
+                                    v.emplace_back(map[y_sapf](index.x(), index.y()));
                                 }
                             }
                             map[hull_obstacle_string](index.x(), index.y()) = 1;
                         }
-                    }   
+                        // else
+                        // {
+                        //     LOG(INFO)<<"out";
+                        // } 
+                    }
+                    // else
+                    // {
+                    //     LOG(INFO)<<"out";
+                    // }  
+                    // cv::imshow("contour", contour);
+                    // cv::waitKey(0);
                 }
-
-                // cv::imshow("RefImage", RefImage);
-                // cv::waitKey(0);
-
-                // std::vector<double> x_start = {0, 2, 4, 6};  // 起点的 x 坐标
-                // std::vector<double> y_start = {0, 2, 4, 6};  // 起点的 y 坐标
-
-                // // 定义箭头的方向（矢量的 x 和 y 方向）
-                // std::vector<double> u = {1, 0.5, -1, 0};  // x 方向
-                // std::vector<double> v = {0, 1, 0.5, -1};  // y 方向
 
                 // // 使用 quiver 函数在图中画箭头
                 // // 循环绘制每个箭头，并为每个箭头设置不同颜色
                 // // 循环绘制每个箭头，并为每个箭头设置不同颜色
-                matplotlibcpp::quiver(x_start, y_start, u, v);
 
-                matplotlibcpp::axis("equal");
+                // cv::imshow("RefImage", RefImage);
+                // cv::waitKey(0);
+                // matplotlibcpp::quiver(x_start, y_start, u, v);
 
-                // 显示图像
+                // matplotlibcpp::axis("equal");
+
+                // // 显示图像
                 // matplotlibcpp::show();
 
                 // LOG(INFO)<<"SHOW";
@@ -1591,9 +1706,9 @@ void PathPlanning::computeRep()
             }
             else
             {
-                LOG(INFO)<<"NONGENERAL DIRECT";
+                // LOG(INFO)<<"NONGENERAL DIRECT";
 
-                double d = map.getResolution() * (inflation_radius);
+                
                 double d_rel;
                 if (d < d_safe)
                 {
@@ -1638,15 +1753,15 @@ void PathPlanning::computeRep()
                     // LOG(INFO)<<"< 1e-3"<<" -"<<r;
 
                 // 初始化随机数生成器
-                std::random_device rd;   // 用于生成种子
-                std::mt19937 gen(rd());  // 使用Mersenne Twister算法生成随机数
+                // std::random_device rd;   // 用于生成种子
+                // std::mt19937 gen(rd());  // 使用Mersenne Twister算法生成随机数
 
-                // 定义一个均匀分布范围 [20, 25]
-                std::uniform_int_distribution<> distr(55, 60);
+                // // 定义一个均匀分布范围 [20, 25]
+                // std::uniform_int_distribution<> distr(20, 25);
 
-                // 生成一个随机数
-                int random_number = distr(gen);
-                std::vector<double> x_start, y_start, u, v;
+                // // 生成一个随机数
+                // int random_number = distr(gen);
+                // std::vector<double> x_start, y_start, u, v;
                 for (size_t i = 0; i < single_contours[0].size(); i++)
                 {
                     cv::Point2f pt1 = single_contours[0][i];
@@ -1673,20 +1788,24 @@ void PathPlanning::computeRep()
                         normal_adj.x = cos(r)*normal.x - sin(r)*normal.y;
                         normal_adj.y = sin(r)*normal.x + cos(r)*normal.y;
                     }
+                    cv::Point2f F_SAPF_V = F_SAPF * normal_adj;
                     // LOG(INFO)<<"normal_adj: "<<normal_adj;
                     // LOG(INFO)<<"pt1: "<<pt1;
                     if (check_image.at<uchar>(pt1) != 255)
                     {
+                        // contour.at<uchar>(single_contours[0][i]) = 255;
                         grid_map::Index index(pt1.y, pt1.x);
                         // LOG(INFO)<<"index: "<<index.transpose();
                         if (map[hull_obstacle_string](index.x(), index.y()) == 0)
                         {
-                            map["SAPF_X"](index.x(), index.y()) += normal_adj.y;
-                            map["SAPF_Y"](index.x(), index.y()) += normal_adj.x; 
-                            if (i%random_number == 0)
+                            // map[x_sapf](index.x(), index.y()) += normal_adj.y;
+                            // map[y_sapf](index.x(), index.y()) += normal_adj.x; 
+                            map[x_sapf](index.x(), index.y()) += F_SAPF_V.y;
+                            map[y_sapf](index.x(), index.y()) += F_SAPF_V.x; 
+                            if (i%10 == 0 && inflation_radius%8 == 0)
                             {
                                 cv::Point start(pt1.x, pt1.y);
-                                cv::Point end(start.x + map["SAPF_X"](index.x(), index.y()) * 5, start.y + map["SAPF_Y"](index.x(), index.y()) * 5);
+                                cv::Point end(start.x + map[x_sapf](index.x(), index.y()) * 5, start.y + map[y_sapf](index.x(), index.y()) * 5);
                                 cv::arrowedLine(RefImage, start, end, cv::Scalar(255), 2, 8, 0, 0.1);
                                 grid_map::Position p2;
                                 if (map.getPosition(index, p2))
@@ -1694,381 +1813,811 @@ void PathPlanning::computeRep()
                                     // LOG(INFO)<<"p2: "<<p2.transpose();
                                     x_start.emplace_back(p2.x());
                                     y_start.emplace_back(p2.y());
-                                    u.emplace_back(map["SAPF_X"](index.x(), index.y()));
-                                    v.emplace_back(map["SAPF_Y"](index.x(), index.y()));
+                                    u.emplace_back(map[x_sapf](index.x(), index.y()));
+                                    v.emplace_back(map[y_sapf](index.x(), index.y()));
                                 }
                             }
                             map[hull_obstacle_string](index.x(), index.y()) = 1;
                         }
                     }
                 }
-                matplotlibcpp::quiver(x_start, y_start, u, v);
-                matplotlibcpp::axis("equal");
-
-                // plt::xlim(4, 0);
-                // matplotlibcpp::show();
+                // cv::imshow("contour", contour);
+                // cv::waitKey(0);
                 // cv::imshow("RefImage", RefImage);
                 // cv::waitKey(0);
-                // }
-                // else // 不处于同一竖直线上
-                // {
-                //     // 计算直线的斜率
-                //     cv::Mat more_image = cv::Mat::zeros(map.getSize(). x(), map.getSize().y(), CV_8UC1);
-                //     cv::Mat less_image = cv::Mat::zeros(map.getSize(). x(), map.getSize().y(), CV_8UC1);
-                //     double slope = (goal_point.y - centroid.y) / (goal_point.x - centroid.x);
-                //     for (size_t i = 0; i < single_contours[0].size(); i++) 
-                //     {
-                //         cv::Point2f pt1 = single_contours[0][i];
-                //         cv::Point2f pt2 = single_contours[0][(i + 1) % single_contours[0].size()];
-                //         cv::Point2f tangent = pt2 - pt1;
-                //         cv::Point2f normal = cv::Point2f(-tangent.y, tangent.x);
-                //         float length = cv::norm(normal);
-                //         if (length > 0) 
-                //         {
-                //             normal /= length;  
-                //         }
-                //         cv::Point2f v1 = goal_point - centroid;
-                //         cv::Point2f v2 = pt1 - centroid;
-                //         if (v1.x * v2.y - v1.y * v2.x > 0)
-                //         {
-                //             normal_adj.x = cos(r)*normal.x - sin(r)*normal.y;
-                //             normal_adj.y = sin(r)*normal.x + cos(r)*normal.y;
-                //         }
-                //         else
-                //         {
-                //             normal_adj.x = cos(-r)*normal.x - sin(-r)*normal.y;
-                //             normal_adj.y = sin(-r)*normal.x + cos(-r)*normal.y;
-                //         }
-                //         // double side = (pt1.y - centroid.y) - slope * (pt1.x - centroid.x);
-                //         // cv::Point2f normal_adj;
-                //         // if (side > 0)
-                //         // {
-                //         //     normal_adj.x = cos(-r)*normal.x - sin(-r)*normal.y;
-                //         //     normal_adj.y = sin(-r)*normal.x + cos(-r)*normal.y;
-                //         //     more_image.at<uchar>(pt1) = 255;
-                //         // }
-                //         // else
-                //         // {
-                //         //     normal_adj.x = cos(r)*normal.x - sin(r)*normal.y;
-                //         //     normal_adj.y = sin(r)*normal.x + cos(r)*normal.y;
-                //         //     less_image.at<uchar>(pt1) = 255;
-                //         // }
-                //         if (check_image.at<uchar>(pt1) != 255)
-                //         {
-                //             grid_map::Index index(pt1.y, pt1.x);
-                //             if (map[hull_obstacle_string](index.x(), index.y()) == 0)
-                //             {
-                //                 map["SAPF_X"](index.x(), index.y()) += normal_adj.x;
-                //                 map["SAPF_Y"](index.x(), index.y()) += normal_adj.y;  
-                //                 if (i%10 == 0)
-                //                 {
-                //                     cv::Point start(pt1.x, pt1.y);
-                //                     cv::Point end(start.x + map["SAPF_X"](index.x(), index.y()) * 5, start.y + map["SAPF_Y"](index.x(), index.y()) * 5);
-                //                     cv::arrowedLine(RefImage, start, end, cv::Scalar(255), 2, 8, 0, 0.1);
-                //                 }
-                //                 map[hull_obstacle_string](index.x(), index.y()) = 1;
-                //             }
-                //         }
-                //     }
-                //     cv::imshow("more_image", more_image);
-                //     cv::waitKey(0);
-                //     cv::imshow("less_image", less_image);
-                //     cv::waitKey(0);
-                //     cv::imshow("RefImage", RefImage);
-                //     cv::waitKey(0);
-                // }
-            
+                // matplotlibcpp::quiver(x_start, y_start, u, v);
+                // matplotlibcpp::axis("equal");
+                // matplotlibcpp::show();
             }
         }
     
-        // int index_pixel = 0;
-        // std::vector<double> x_start, y_start, u, v;
+        // cv::Mat check_flag = cv::Mat::zeros(obstacle_layer.size(), CV_8UC1);
         // for (int i = 0; i < map.getSize().x(); i++)
         // {
         //     for (int j = 0; j < map.getSize().y(); j++)
         //     {
-        //         if (index_pixel%20 == 0)
+        //         if (map[hull_obstacle_string](i, j) == 1)
         //         {
-        //             if (map[hull_obstacle_string](i, j) != 0)
-        //             {
-        //                 grid_map::Index index(i, j);
-        //                 grid_map::Position p2;
-        //                 if (map.getPosition(index, p2))
-        //                 {
-        //                     x_start.emplace_back(p2.x());
-        //                     y_start.emplace_back(p2.y());
-        //                     u.emplace_back(map["SAPF_X"](index.x(), index.y()));
-        //                     v.emplace_back(map["SAPF_Y"](index.x(), index.y()));
-        //                 }
-        //             }
+        //             check_flag.at<uchar>(i, j) = 255;
         //         }
-        //         index_pixel ++;
         //     }
         // }
-        // matplotlibcpp::quiver(x_start, y_start, u, v);
-        // matplotlibcpp::axis("equal");
-        matplotlibcpp::save("/home/lichao/catkin_pathplanning/src/path_planning/data/SAPF.png");
+        // cv::imshow("check_flag", check_flag);
+        // cv::waitKey(0);
+        
+        matplotlibcpp::quiver(x_start, y_start, u, v);
+        matplotlibcpp::axis("equal");
         matplotlibcpp::show();
+    }
+}
+
+// 合并所有障碍的势场
+void PathPlanning::mergeAllObstacle()
+{
+    // LOG(INFO)<<"OKKK";
+    SAPF_X = "SAPF_X";
+    SAPF_Y = "SAPF_Y";
+    map.add(SAPF_X, 0);
+    map.add(SAPF_Y, 0);
     
+    // LOG(INFO)<<"OKKK";
+    bool flag = cv::countNonZero(goal_obstacle) > 0;
+    // LOG(INFO)<<flag;
+    for (int i = 0; i < map.getSize().x(); i++)
+    {
+        for (int j = 0; j < map.getSize().y(); j++)
+        {
+            if (flag)
+            {
+                map[SAPF_X](i, j) += map.get("obstacle_goal_X")(i, j);
+                map[SAPF_Y](i, j) += map.get("obstacle_goal_Y")(i, j);
+            }
+            // LOG(INFO)<<"OKKK";
+            for (int k = 0; k < obstacles.size(); k++)
+            {
+                string obstacle_x = "obstacle_"+std::to_string(k) + "_X";
+                string obstacle_y = "obstacle_"+std::to_string(k) + "_Y";
+                map[SAPF_X](i, j) += map.get(obstacle_x)(i, j);
+                map[SAPF_Y](i, j) += map.get(obstacle_y)(i, j);
+                // LOG(INFO)<<i<<" "<<j<<" "<<map[SAPF_X](i, j)<<" "<<map[SAPF_Y](i, j);
+            }
+        }
     }
     
+    // if (cv::countNonZero(goal_obstacle) > 0)
+    // {
+    //     map[SAPF_X] = map.get("obstacle_goal_X");
+    //     map[SAPF_Y] = map.get("obstacle_goal_Y");
+    // }
+    // LOG(INFO)<<"OKKK";
 
+    // for (int i = 0; i < obstacles.size(); i++)
+    // {
+    //     string obstacle_x = "obstacle_"+std::to_string(i) + "_X";
+    //     string obstacle_y = "obstacle_"+std::to_string(i) + "_Y";
+    // LOG(INFO)<<"OKKK";
 
-return;
-    for (int inflation_radius = 1; inflation_radius <= d_noinflu_rad; inflation_radius++)
+    //     map[SAPF_X] += map[obstacle_x];
+    // LOG(INFO)<<"OKKK";
+
+    //     map[SAPF_Y] += map[obstacle_y];
+    // }
+    // LOG(INFO)<<"OKKK";
+}
+
+void PathPlanning::showSAPFMatplotlib()
+{
+    std::vector<double> x_start, y_start, u, v;
+    for (int i = 0; i < map.getSize().x(); i++)
     {
-        double d = map.getResolution() * (inflation_radius);
-
-        double d_rel;
-
-        if (d < d_safe)
+        for (int j = 0; j < map.getSize().y(); j++)
         {
-            d_rel = 0;
-        }
-        else if (d > d_inf)
-        {
-            d_rel = 1;
-        }
-        else
-        {
-            d_rel = (d - d_safe) / (2 * (d_vort - d_safe));
-        }
-
-        double r;
-
-        if (d_rel <= 0.5)
-        {
-            r = 3.1415926 * d_rel;
-        }
-        else
-        {
-            r = 3.1415926 * (1 - d_rel);
-        }
-        
-
-        if (goal_obstacle_flag) // 表示终点位于某个凹陷区域内
-        {
-            
-            // std::vector<std::vector<cv::Point>> goal_contours;
-            // std::vector<cv::Vec4i> goal_hierarchy;
-            // cv::findContours(goal_obstacle, goal_contours, goal_hierarchy, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_NONE);
-            cv::dilate(goal_obstacle, goal_obstacle, element);
-            cv::imshow("goal_obstacle", goal_obstacle);
-            cv::waitKey(0);
-
-            std::vector<std::vector<cv::Point>> single_contours;
-            std::vector<cv::Vec4i> single_hierarchy;
-            cv::findContours(goal_obstacle, single_contours, single_hierarchy, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_NONE);
-
-            if (inflation_radius <= d_safe_rad || inflation_radius > d_inf_rad)
+            if (i%10 == 0 && j%10 ==0)
             {
-                cv::Mat RefImage = cv::Mat::zeros(map.getSize(). x(), map.getSize().y(), CV_8UC1);
-                cv::Mat contour_image = cv::Mat::zeros(map.getSize(). x(), map.getSize().y(), CV_8UC1);
-
-                for (size_t i = 0; i < single_contours[0].size(); i++) 
+                grid_map::Index index(i, j);
+                if (map[SAPF_X](index.x(), index.y()) != 0 || map[SAPF_Y](index.x(), index.y()) != 0)
                 {
-                    cv::Point2f pt1 = single_contours[0][i];
-                    cv::Point2f pt2 = single_contours[0][(i + 1) % single_contours[0].size()];
-                    cv::Point2f tangent = pt2 - pt1;
-                    cv::Point2f normal = cv::Point2f(-tangent.y, tangent.x);
-                    // LOG(INFO)<<normal;
-                    float length = cv::norm(normal);
-                    if (length > 0) 
+                    grid_map::Position p2;
+                    if (map.getPosition(index, p2))
                     {
-                        normal /= length;  
+                        x_start.emplace_back(p2.x());
+                        y_start.emplace_back(p2.y());
+                        // LOG(INFO)<<p2.transpose()<<" "<<map.get(SAPF_X)(i, j)<<" "<<map[SAPF_Y](i, j)<<" "<<i<<" "<<j;
+                        Eigen::Vector2d normal_(map[SAPF_X](i, j), map[SAPF_Y](i, j));
+                        // LOG(INFO)<<"normal_: "<<normal_.transpose();
+                        // normal_.normalize();
+                        // LOG(INFO)<<"normal_: "<<normal_.transpose();
+                        u.emplace_back(normal_.x());
+                        v.emplace_back(normal_.y());
                     }
-                    // 在 cv::Point2f 中，第一个元素代表列（也就是 X 方向），第二个元素代表行（Y 方向）
-                    if (check_image.at<uchar>(pt1) != 255)
-                    {
-                        // 通过像素坐标获得地图index坐标 还需要乘以本身的力
-                        grid_map::Index index(pt1.y, pt1.x);
-                        map["SAPF_X"](index.x(), index.y()) += normal.x;
-                        // map["SAPF_X_FLAG"](index.x(), index.y()) = 1;
-                        map["SAPF_Y"](index.x(), index.y()) += normal.y; 
-                        // map["SAPF_Y_FLAG"](index.x(), index.y()) = 1;
-                        // 表明这个栅格已经被goal所在的障碍赋上值
-                        map["GOAL_SAFE_FLAG"](index.x(), index.y()) = 1;
-
-                        contour_image.at<uchar>(pt1) = 255;
-                        if (i%10 == 0)
-                        {
-                            cv::Point start(pt1.x, pt1.y);
-                            cv::Point end(start.x + map["SAPF_X"](index.x(), index.y()) * 5, start.y + map["SAPF_Y"](index.x(), index.y()) * 5);
-                            cv::arrowedLine(RefImage, start, end, cv::Scalar(255), 2, 8, 0, 0.1);
-                            LOG(INFO)<<"normal: "<<normal;
-                            cv::imshow("RefImage", RefImage);
-                            cv::waitKey(0);
-                        }
-                    }
-
-                    // RefImage.at<uchar>(pt1) = 255;
                 }
+            }
+        }
+    }
+    LOG(INFO)<<x_start.size()<<" "<<y_start.size()<<" "<<u.size()<<" "<<v.size();
+    matplotlibcpp::quiver(x_start, y_start, u, v);
 
-                // for (size_t i = 0; i < single_contours[0].size(); i++)
-                // {
-                //     cv::Point2f pt1 = single_contours[0][i];
-                //     grid_map::Index index(pt1.y, pt1.x);
-                //     LOG(INFO)<<map["SAPF_X"](index.x(), index.y());
-                //     LOG(INFO)<<map["SAPF_Y"](index.x(), index.y());
-                // }
-                
-                
-                // cv::imwrite("/home/lichao/catkin_pathplanning/src/path_planning/data/RefImage.png", RefImage);
-                cv::imshow("contour_image", contour_image);
-                cv::waitKey(0);
+    matplotlibcpp::axis("equal");
 
-                
-                // 将地图内的障碍斥力部分转为凸向显示，并标记斥力方向
-                // showRepImage();
+    // 显示图像
+    matplotlibcpp::show();
+}
+
+bool PathPlanning::AttPotential(Node & node, Eigen::Vector2d & AttForce)
+{
+    if (map.isInside(node.position))
+    {
+        grid_map::Index index;
+        if (map.getIndex(node.position, index))
+        {
+            if (obstacle_layer.at<uchar>(index.x(), index.y()) == 0) // 位于不可通行区域外部
+            {
+                double d = (goal_.head(2) - node.position).norm();
+                if (d < d_g_att)
+                {
+                    // 计算目标位置与当前节点位置的差值
+                    Eigen::Vector2d position_diff = goal_.head(2) - node.position;
+
+                    // 检查差值向量的长度是否为0
+                    double diff_length = position_diff.norm();
+                    if (diff_length == 0) {
+                        // 处理向量长度为0的情况，例如返回一个默认值或抛出异常
+                        throw std::runtime_error("Position difference vector is zero, cannot normalize.");
+                    }
+                    // 归一化向量并乘以吸引力阈值
+                    AttForce = position_diff / diff_length * d_g_att_th;
+                }
+                else
+                {
+                    // 计算目标位置与当前节点位置的差值
+                    Eigen::Vector2d position_diff = goal_.head(2) - node.position;
+
+                    // 检查差值向量的长度是否为0
+                    double diff_length = position_diff.norm();
+                    if (diff_length == 0) {
+                        // 处理向量长度为0的情况，例如返回一个默认值或抛出异常
+                        throw std::runtime_error("Position difference vector is zero, cannot normalize.");
+                    }
+
+                    // 归一化向量并乘以吸引力阈值
+                    AttForce = position_diff / diff_length * d_g_att_th * d_g_att / d;
+                }
+                return true;
             }
             else
             {
-                std::pair<cv::Mat, cv::Mat> segMats = getSegMoreAndLess(goal_obstacle.clone(), hull_mat, ray_Dir);
+                return false;
+            }
+        }
+        else
+        {
+            return false;
+        }
+    }
+    else
+    {
+        return false;
+    }
+}
 
-
-                // cv::imshow("less_image", segMats.first);
-                // cv::waitKey(0);
-                // cv::imshow("more_image", segMats.second);
-                // cv::waitKey(0);
-
-                for (size_t i = 0; i < single_contours[0].size(); i++) 
+void PathPlanning::showAttPotential()
+{
+    std::vector<double> x_start, y_start, u, v;
+    for (int i = 0; i < map.getSize().x(); i++)
+    {
+        for (int j = 0; j < map.getSize().y(); j++)
+        {
+            if (i%10 == 0 && j%10 ==0)
+            {
+                grid_map::Position p2;
+                if (map.getPosition(grid_map::Index(i, j), p2))
                 {
-                    cv::Point2f pt1 = single_contours[0][i];
-                    cv::Point2f pt2 = single_contours[0][(i + 1) % single_contours[0].size()];
-                    cv::Point2f tangent = pt2 - pt1;
-                    cv::Point2f normal = cv::Point2f(-tangent.y, tangent.x);
-                    float length = cv::norm(normal);
-                    if (length > 0) 
+                    Node node;
+                    node.position = p2;
+                    Eigen::Vector2d SAPF;
+                    if (AttPotential(node, SAPF))
                     {
-                        normal /= length;  
+                        // SAPF.normalize();
+                        x_start.emplace_back(p2.x());
+                        y_start.emplace_back(p2.y());
+                        u.emplace_back(SAPF.x());
+                        v.emplace_back(SAPF.y());
                     }
-                    cv::Point2f normal_adj;
-                    if (segMats.second.at<uchar>(single_contours[0][i]) == 255)
+                }
+            }
+            
+        }
+    }
+    matplotlibcpp::quiver(x_start, y_start, u, v);
+
+    matplotlibcpp::axis("equal");
+
+    // 显示图像
+    matplotlibcpp::show();
+    
+}
+
+void PathPlanning::showSAPF()
+{
+    std::vector<double> x_start, y_start, u, v;
+    for (int i = 0; i < map.getSize().x(); i++)
+    {
+        for (int j = 0; j < map.getSize().y(); j++)
+        {
+            if (i%10 == 0 && j%10 ==0)
+            {
+                grid_map::Position p2;
+                if (map.getPosition(grid_map::Index(i, j), p2))
+                {
+                    Node node;
+                    node.position = p2;
+                    Eigen::Vector2d SAPF;
+                    if (getSAPF(node, SAPF))
                     {
-                        normal_adj.x = cos(-r)*normal.x - sin(-r)*normal.y;
-                        normal_adj.y = sin(-r)*normal.x + cos(-r)*normal.y;
+                        // SAPF.normalize();
+                        x_start.emplace_back(p2.x());
+                        y_start.emplace_back(p2.y());
+                        u.emplace_back(SAPF.x());
+                        v.emplace_back(SAPF.y());
+                    }
+                }
+            }
+            
+        }
+    }
+    matplotlibcpp::quiver(x_start, y_start, u, v);
+
+    matplotlibcpp::axis("equal");
+
+    // 显示图像
+    matplotlibcpp::show();
+}
+
+void PathPlanning::computeRep()
+{
+    computeObstacles();
+    // cv::imshow("check_image_1", check_image);
+    // cv::waitKey(0);
+    computeRadius(0.6, 1.5, 0.6);
+    // cv::imshow("check_image_2", check_image);
+    // cv::waitKey(0);
+    computeRepObstacleGoal();
+    computeRepObstacle();
+    mergeAllObstacle();
+    showSAPFMatplotlib();
+    showAttPotential();
+    showSAPF();
+}
+
+bool PathPlanning::getSAPF(Node & node, Eigen::Vector2d & SAPF)
+{
+    grid_map::Index index;
+    if (map.getIndex(node.position, index))
+    {
+        if (obstacle_layer.at<uchar>(index.x(), index.y()) == 0)
+        {
+            if (map.exists(SAPF_X) && map.exists(SAPF_Y))
+            {
+                SAPF.x() = map[SAPF_X](index.x(), index.y());
+                SAPF.y() = map[SAPF_Y](index.x(), index.y());
+                return true;
+            }
+            else
+            {
+                LOG(ERROR)<<"SAPF_X or SAPF_Y not exist";
+                return false;
+            }
+        }
+        else
+        {
+            return false;
+        }
+    }
+    else
+    {
+        return false;
+    }
+}
+
+// 计算下一个节点的代价
+bool PathPlanning::ComputeNodeCost(NodePtr currentNodeP, NodePtr nextNodeP)
+{
+    LOG(INFO)<<"ComputeNodeCost"<<endl;
+    if (map.isInside(nextNodeP->position) && map.isInside(currentNodeP->position))
+    {
+        // 分为贪心项和启发项，贪心项由所行驶的路程决定，启发项由当前点到目标点的距离及角度差决定
+        // 整个代价还包括当前节点方向与下一节点方向偏差，
+        LOG(INFO)<<currentNodeP->ori<<" "<<nextNodeP->ori<<endl;
+        nextNodeP->g_cost = currentNodeP->g_cost + (currentNodeP->position - nextNodeP->position).norm();
+        nextNodeP->h_cost = (goal_.head(2) - nextNodeP->position).norm() + abs(nextNodeP->ori - goal_.z()) * 5;
+        nextNodeP->cost = nextNodeP->g_cost + nextNodeP->h_cost + abs(nextNodeP->ori - currentNodeP->ori)*2;
+        return true;
+    }
+    else
+    {
+        return false;
+    }
+}
+
+// 四面八方都打分，与yaw越一致的地方打分越高
+// 先按四面八方来获取所有的节点
+bool PathPlanning::transitions(NodePtr currentNodeP, double yaw, std::vector<NodePtr> & nodes)
+{
+    Eigen::Vector3d raw_length(0.4, 0, 0);
+    Eigen::Vector3d raw_point = Eigen::Vector3d::Zero();
+    raw_point.head(2) = currentNodeP->position;
+    auto current_angles = angles;
+    std::transform(current_angles.begin(), current_angles.end(), current_angles.begin(), [yaw](double x) {
+        return yaw + x;
+    });
+
+    // for (auto & angle : current_angles)
+    // {
+    //     LOG(INFO)<<"angle:"<<angle;
+    // }
+    for (int i = 0; i < current_angles.size(); i++)
+    {
+        LOG(INFO)<<"i = "<<i<<" "<<current_angles.at(i);
+    }
+
+    vector<Eigen::AngleAxisd> rots;
+    for (auto & angle : current_angles)
+    {
+        rots.emplace_back(Eigen::AngleAxisd(angle, Eigen::Vector3d::UnitZ()));
+    }
+    grid_map::Index index;
+    if (map.getIndex(currentNodeP->position, index))
+    {
+        if (full_feasible_region.at<uchar>(index.x(), index.y()) == 255) // 如果在一个安全裕度范围内，则使用原始的节点扩展
+        {      
+            LOG(INFO)<<"IN FULL FEASIBLE REGION";   
+            for (auto & angle : current_angles)
+            {
+                Eigen::Vector3d point = raw_point + Eigen::AngleAxisd(angle, Eigen::Vector3d::UnitZ()).toRotationMatrix() * raw_length;
+                Node node;
+                node.position = point.head(2);
+                node.ori = angle;
+                NodePtr next_node_p = std::make_shared<Node>(node);
+                LOG(INFO)<<"position: "<<node.position.transpose();
+                LOG(INFO)<<"angle: "<<angle;
+                if (ComputeNodeCost(currentNodeP, next_node_p))
+                {
+                    next_node_p->PreFootstepNode = currentNodeP;
+                    LOG(INFO)<<"g cost: "<<next_node_p->g_cost<<", h cost: "<<next_node_p->h_cost<<", cost: "<<next_node_p->cost;
+                    nodes.emplace_back(next_node_p);
+                }
+                // 检查node的可通行性
+            }
+            return true;
+        }
+        else // 如果不在安全裕度内，则根据方向来寻找节点
+        {
+            LOG(INFO)<<"NOT IN FULL FEASIBLE REGION";   
+            for (auto & angle : current_angles)
+            {
+                // 找到第一个不为可通行的节点，还需要好好规划这个节点
+                double d_l = 0.2;
+                double d_i = 0.2;
+                for (; d_l > 0, d_i < 0.4; d_l -= 0.05, d_i += 0.05)
+                {
+                    Node n_l, n_i;
+                    Eigen::Vector3d length_l(d_l, 0, 0);
+                    Eigen::Vector3d length_i(d_i, 0, 0);
+                    n_l.position = (raw_point + Eigen::AngleAxisd(angle, Eigen::Vector3d::UnitZ()).toRotationMatrix() * length_l).head(2);
+                    n_l.ori = angle;
+
+                    n_i.position = (raw_point + Eigen::AngleAxisd(angle, Eigen::Vector3d::UnitZ()).toRotationMatrix() * length_i).head(2);
+                    n_i.ori = angle;
+                    if (CheckTraversability(n_l))
+                    {
+                        NodePtr next_node_p = std::make_shared<Node>(n_l);
+                        if (ComputeNodeCost(currentNodeP, next_node_p))
+                        {
+                            next_node_p->PreFootstepNode = currentNodeP;
+                            nodes.emplace_back(next_node_p);
+                            break;
+                        }
+                    }
+                    if (CheckTraversability(n_i))
+                    {
+                        NodePtr next_node_p = std::make_shared<Node>(n_i);
+                        if (ComputeNodeCost(currentNodeP, next_node_p))
+                        {
+                            next_node_p->PreFootstepNode = currentNodeP;
+                            nodes.emplace_back(next_node_p);
+                            break;
+                        }
+                    }
+                }
+            }
+            return true;
+        }
+    }
+    else
+    {
+        return false;
+    }
+}
+
+// 把support area根据脚踝点和中心点分为4部分，求四部分的支撑平面并保证一致来确定整个支撑区域的支撑平面，并根据有没有点穿过支撑区域来确定是否可通行
+bool PathPlanning::isTraversbility(Node & node)
+{
+    Eigen::AngleAxisd ax(node.ori, Eigen::Vector3d::UnitZ());
+    Eigen::Vector3d mid(node.position.x(), node.position.y(), 0);
+    // 求4个子区域
+    Eigen::Vector3d mid_top = ax.toRotationMatrix() * Eigen::Vector3d(support_area.Up, 0, 0) + mid;
+    Eigen::Vector3d top_left = ax.toRotationMatrix() * Eigen::Vector3d(0, support_area.Left, 0) + mid_top;
+    Eigen::Vector3d top_right = ax.toRotationMatrix() * Eigen::Vector3d(0, - support_area.Right, 0) + mid_top;
+
+
+    Eigen::Vector3d mid_left = ax.toRotationMatrix() * Eigen::Vector3d(0, support_area.Left, 0) + mid;
+    Eigen::Vector3d mid_right = ax.toRotationMatrix() * Eigen::Vector3d(0, -support_area.Right, 0) + mid;
+
+    Eigen::Vector3d mid_button = ax.toRotationMatrix() * Eigen::Vector3d(- support_area.Button, 0, 0) + mid;
+    Eigen::Vector3d button_left = ax.toRotationMatrix() * Eigen::Vector3d(0, support_area.Left, 0) + mid_button;
+    Eigen::Vector3d button_right = ax.toRotationMatrix() * Eigen::Vector3d(0, - support_area.Right, 0) + mid_button;
+
+    if (map.isInside(top_left.head(2)) && map.isInside(top_right.head(2)) && map.isInside(button_left.head(2)) && map.isInside(button_right.head(2)))
+    {
+        int top_left_support_plane, top_right_support_plane, button_left_support_plane, button_right_support_plane;
+        bool top_left_flag = subRegionSupportPlane(top_left.head(2), mid_top.head(2), mid_left.head(2), mid.head(2), top_left_support_plane);
+        bool top_right_flag = subRegionSupportPlane(mid_top.head(2), mid_right.head(2), mid.head(2), mid_right.head(2), top_right_support_plane);
+        bool button_left_flag = subRegionSupportPlane(mid_left.head(2), mid.head(2), button_left.head(2), mid_button.head(2), button_left_support_plane);
+        bool button_right_flag = subRegionSupportPlane(mid.head(2), mid_right.head(2), mid_button.head(2), button_right.head(2), button_right_support_plane);
+        
+        if (top_left_flag && top_right_flag && button_left_flag && button_right_flag)
+        {
+            if (top_left_support_plane == top_right_support_plane && top_right_support_plane == button_left_support_plane && button_left_support_plane == button_right_support_plane)
+            {
+                Eigen::Vector3d normal = pd.planes_info.at(top_left_support_plane).normal;
+                Eigen::Vector3d center = pd.planes_info.at(top_left_support_plane).center;
+                vector<Eigen::Vector3d> points;
+                if (getAllPoints(top_left.head(2), top_right.head(2), button_left.head(2), button_right.head(2), points))
+                {
+                    for (auto & point : points)
+                    {
+                        if ((point - center).dot(normal) > 0.01)
+                        {
+                            return false;
+                        }
+                    }
+                    return true;
+                }
+                else
+                {
+                    return false;
+                }
+            }
+            else
+            {
+                return false;
+            }
+        }
+        else
+        {
+            return false;
+        }
+    }
+    else
+    {
+        return false;
+    }
+}
+
+bool PathPlanning::getAllPoints(Eigen::Vector2d TL, Eigen::Vector2d TR, Eigen::Vector2d BL, Eigen::Vector2d BR, vector<Eigen::Vector3d> & points)
+{
+    if (map.isInside(TL) && map.isInside(TR) && map.isInside(BL) && map.isInside(BR))
+    {
+        grid_map::LineIterator iterator_start(map, BR, BL);
+        grid_map::LineIterator iterator_end(map, TR, TL);
+        for (; !iterator_start.isPastEnd()&&!iterator_end.isPastEnd(); ++iterator_start, ++iterator_end)
+        {
+            grid_map::Index start_index(*iterator_start);
+            grid_map::Index end_index(*iterator_end);
+            for (grid_map::LineIterator iterator_l(map, start_index, end_index); !iterator_l.isPastEnd(); ++iterator_l)
+            {
+                const grid_map::Index index_l(*iterator_l);
+                grid_map::Position3 cor_position;
+                if (map.getPosition3("elevation", index_l, cor_position))
+                {
+                    if (!std::isnan(cor_position.z()))
+                    {
+                        points.emplace_back(cor_position);
+                    }
+                }
+            }
+        }
+        return true;
+    }
+    else
+    {
+        return false;
+    }
+}
+
+bool PathPlanning::subRegionSupportPlane(Eigen::Vector2d TL, Eigen::Vector2d TR, Eigen::Vector2d BL, Eigen::Vector2d BR, int & plane_index)
+{
+    if (map.isInside(TL) && map.isInside(TR) && map.isInside(BL) && map.isInside(BR))
+    {
+        std::map<int, int> countMap;
+        int NanNumber = 0;
+        Eigen::Vector2d mid_point = (TL + TR + BL + BR)/4;
+        grid_map::LineIterator iterator_start(map, BR, BL);
+        grid_map::LineIterator iterator_end(map, TR, TL);
+        for (; !iterator_start.isPastEnd()&&!iterator_end.isPastEnd(); ++iterator_start, ++iterator_end)
+        {
+            grid_map::Index start_index(*iterator_start);
+            grid_map::Index end_index(*iterator_end);
+            for (grid_map::LineIterator iterator_l(map, start_index, end_index); !iterator_l.isPastEnd(); ++iterator_l)
+            {
+                const grid_map::Index index_l(*iterator_l);
+                grid_map::Position3 cor_position;
+                if (map.getPosition3("elevation", index_l, cor_position))
+                {
+                    if (!std::isnan(cor_position.z()))
+                    {
+                        if (!std::isnan(map["label"](index_l.x(), index_l.y())))
+                        {
+                            int label_index = static_cast<int>(map["label"](index_l.x(), index_l.y()));
+                            countMap[label_index]++;
+                        }
+                        else
+                        {
+                            NanNumber++;// 编号是nan
+                        }
                     }
                     else
                     {
-                        normal_adj.x = cos(r)*normal.x - sin(r)*normal.y;
-                        normal_adj.y = sin(r)*normal.x + cos(r)*normal.y;
+                        NanNumber++; // 点是nan
                     }
-                    if (check_image.at<uchar>(pt1) != 255)
-                    {
-                        grid_map::Index index(pt1.y, pt1.x);
-                        // 只有这个点没有被赋值，才能行
-                        if (map["GOAL_SAFE_FLAG"](index.x(), index.y()) == 0)
-                        {
-                            map["SAPF_X"](index.x(), index.y()) += normal_adj.x;
-                            // map["SAPF_X_FLAG"](index.x(), index.y()) = 1;
-                            map["SAPF_Y"](index.x(), index.y()) += normal_adj.y; 
-                            // map["SAPF_Y_FLAG"](index.x(), index.y()) = 1;
-                        }
-                    }
-                    
                 }
-            
-                // showRepImage();
-            }
-        
-        
-        }
-        LOG(INFO)<<"GENERAL OBSTACLE";
-        // 对于一般的障碍群
-        for (auto obstacle : hull_obstacles)
-        {
-            cv::dilate(obstacle, obstacle, element);
-            cv::imshow("obstacle", obstacle);
-            cv::waitKey(0);
-            std::vector<std::vector<cv::Point>> single_contours;
-            std::vector<cv::Vec4i> single_hierarchy;
-            // cv::Mat mask = cv::Mat::zeros(obstacle_layer.size(), CV_8UC1);
-            cv::findContours(obstacle, single_contours, single_hierarchy, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_NONE);
-            // LOG(INFO)<<"find contours";
-            if (inflation_radius <= d_safe_rad || inflation_radius >= d_inf_rad)
-            {
-                cv::Mat RefImage = cv::Mat::zeros(map.getSize(). x(), map.getSize().y(), CV_8UC1);
-                for (size_t i = 0; i < single_contours[0].size(); i++) 
+                else
                 {
-                    cv::Point2f pt1 = single_contours[0][i];
-                    cv::Point2f pt2 = single_contours[0][(i + 1) % single_contours[0].size()];
-                    cv::Point2f tangent = pt2 - pt1;
-                    cv::Point2f normal = cv::Point2f(-tangent.y, tangent.x);
-                    float length = cv::norm(normal);
-                    if (length > 0) 
-                    {
-                        normal /= length;  
-                    }
-
-                    // 通过像素坐标获得地图index坐标 还需要乘以本身的力
-                    if (check_image.at<uchar>(pt1) != 255)
-                    {
-                        grid_map::Index index(pt1.y, pt1.x);
-                        map["SAPF_X"](index.x(), index.y()) += normal.x;
-                        map["SAPF_Y"](index.x(), index.y()) += normal.y;  
-                        if (i%10 == 0)
-                        {
-                            cv::Point start(pt1.x, pt1.y);
-                            cv::Point end(start.x + map["SAPF_X"](index.x(), index.y()) * 5, start.y + map["SAPF_Y"](index.x(), index.y()) * 5);
-                            cv::arrowedLine(RefImage, start, end, cv::Scalar(255), 2, 8, 0, 0.1);
-                        }
-                    }   
+                    NanNumber++; // 不能得到此栅格处的点
                 }
-                cv::imshow("RefImage", RefImage);
-                cv::waitKey(0);
-                // LOG(INFO)<<"SHOW";
-                // showRepImage();
+            }
+        }
+        if (NanNumber > 50)
+        {
+            return false;
+        }
+        double tmp_height = -std::numeric_limits<double>::infinity();
+        int tmp_plane_index;
+        for (auto & pair : countMap)
+        {
+            if (pair.second > 100)
+            {
+                int height = pd.planes_info.at(pair.first).getZ(mid_point);
+                if (height > tmp_height)
+                {
+                    tmp_plane_index = pair.first;
+                    tmp_height = height;
+                }
+            }
+        }
+        plane_index = tmp_plane_index;
+        return true;       
+    }
+    else
+    {
+        return false;
+    }
+    
+}
+
+// 对终点所在的终点所在的区域求其方向
+bool PathPlanning::CheckTraversability(Node & node)
+{
+    // 如果位于安全范围内，就是可通行的
+    grid_map::Index index;
+    if (map.getIndex(node.position, index))
+    {
+        if (check_Mat.at<uchar>(index.x(), index.y()) == 255)
+        {
+            return true;
+        }
+        else
+        {
+            // 以整个脚板，确定支撑平面，再确定可通行性
+            return isTraversbility(node);
+        }
+    }
+    else
+    {
+        return false;
+    }
+}
+
+// 根据 引力、终点吸引力确定合力方向，当在终点障碍涡流范围内时，只考虑引力，否则考虑引力+引力对终点吸引力的影响
+bool PathPlanning::getYaw(Node & node, double & yaw)
+{
+    grid_map::Index index;
+    if (map.getIndex(node.position, index))
+    {
+        // cv::imshow("goal_vortex_region", goal_vortex_region);
+        // cv::waitKey(0);
+        // // 位于终点的涡流域内
+        // if (goal_vortex_region.at<uchar>(index(0), index(1)) == 255)
+        // {
+        //     // 只返回涡流场的力
+        //     LOG(INFO)<<"vortex only";
+        //     Eigen::Vector2d AttForce;
+        //     if (AttPotential(node, AttForce))
+        //     {
+        //         LOG(INFO)<<"AttForce: "<<AttForce.transpose();
+        //         yaw = std::atan2(AttForce(1), AttForce(0)) + M_PI;
+        //         return true;
+        //     }
+        //     else
+        //     {
+        //         return false;
+        //     } 
+        // }
+        // else
+        // {
+        //     // 考虑SAPF和终点的合力
+        //     Eigen::Vector2d AttForce;
+        //     Eigen::Vector2d SAPFForce;
+        //     if (AttPotential(node, AttForce))
+        //     {
+        //         Eigen::Vector2d SAPFForce;
+        //         if (getSAPF(node, SAPFForce))
+        //         {
+        //             yaw = std::atan2(AttForce(1) + SAPFForce(1), AttForce(0) + SAPFForce(0));
+        //             return true;
+        //         }
+        //     }
+        // }
+        Eigen::Vector2d AttForce;
+        Eigen::Vector2d SAPFForce;
+        if (AttPotential(node, AttForce))
+        {
+            Eigen::Vector2d SAPFForce;
+            if (getSAPF(node, SAPFForce))
+            {
+                yaw = std::atan2(AttForce(1) + SAPFForce(1), AttForce(0) + SAPFForce(0));
+                return true;
             }
             else
             {
-                cv::Moments moments = cv::moments(single_contours[0]);
-
-                // 计算重心坐标
-                if (moments.m00 == 0) 
-                {  // 防止除零错误
-                    continue;
-                }
-
-                double cx = moments.m10 / moments.m00;
-                double cy = moments.m01 / moments.m00;
-
-                // 输出重心坐标
-                std::cout << "Contour " << " Centroid: (" << cx << ", " << cy << ")" << std::endl;
-
-                cv::Point2f centroid(cx, cy);
-
-                // 假设另一个点为 (px, py)，可以根据实际需要设定
-                cv::Point2f other_point(goal_index_.y(), goal_index_.x()); 
-
-                // 计算直线的斜率
-                double slope = (other_point.y - centroid.y) / (other_point.x - centroid.x);
-
-                for (size_t i = 0; i < single_contours[0].size(); i++) 
-                {
-                    cv::Point2f pt1 = single_contours[0][i];
-                    cv::Point2f pt2 = single_contours[0][(i + 1) % single_contours[0].size()];
-                    cv::Point2f tangent = pt2 - pt1;
-                    cv::Point2f normal = cv::Point2f(-tangent.y, tangent.x);
-                    float length = cv::norm(normal);
-                    if (length > 0) 
-                    {
-                        normal /= length;  
-                    }
-                    double side = (pt1.y - centroid.y) - slope * (pt1.x - centroid.x);
-                    // 通过像素坐标获得地图index坐标 还需要乘以本身的力
-                    if (check_image.at<uchar>(pt1) != 255)
-                    {
-                        grid_map::Index index(pt1.y, pt1.x);
-                        map["SAPF_X"](index.x(), index.y()) += normal.x;
-                        map["SAPF_Y"](index.x(), index.y()) += normal.y;  
-                    }
-                    
-                }  
-                showRepImage(); 
-            }    
+                return false;
+            }
         }
+        else
+        {
+            return false;
+        }
+
+        return true;
+    }
+    else
+    {
+        return false;
     }
 }
+
+// 节点扩展
+// void NodeExpansion()
+// {
+//     // 根据机器人合力方向来扩展，涡流场强度更大。transitions函数，按四面八方来获取所有候选节点
+//     // 评估每个节点的可通行性
+//     // 打分
+//     // node应该包括，当前方向，节点位置，节点代价
+//     // 得到一些可通行的点之后
+//     // 指定节点的父子关系
+//     // 打分，到终点的距离，已经走过的距离，与起点偏离的角度，与终点偏离的角度，比较近时来起作用吧。考虑与涡流的比例打分
+//     // 打分，分区，在没有SAPF时，使用打分，
+// }
+
+
+bool PathPlanning::reachGoal(Node & node)
+{
+    Eigen::Vector2d diff = goal_.head(2) - node.position;
+    return diff.norm() < 0.4;
+}
+
+bool PathPlanning::plan()
+{
+    debug_image.setTo(cv::Scalar(0, 0, 0), obstacle_layer);
+    LOG(INFO)<<"start planning";
+    cv::imshow("debug", debug_image);
+    cv::waitKey(0);
+
+    std::priority_queue<NodePtr, std::vector<NodePtr>, CompareNode> minHeap;
+    Node start;
+    start.position = start_.head(2);
+    start.ori = start_.z();
+
+    minHeap.push(std::make_shared<Node>(start));
+    while (!minHeap.empty())
+    {
+        NodePtr currentNode = minHeap.top();
+        LOG(INFO)<<"currentNode: "<<currentNode->position.transpose();
+        cv::Mat tmp_image = debug_image.clone();
+        grid_map::Index index;
+        map.getIndex(currentNode->position, index);
+        LOG(INFO)<<"index: "<<index.transpose();
+        cv::Point start_point(index(1), index(0));
+        cv::Point end_point(index(1) - 10 * std::sin(currentNode->ori), index(0) - 10 * std::cos(currentNode->ori));
+        cv::arrowedLine(tmp_image, start_point, end_point, cv::Scalar(255, 0, 0), 2, cv::LINE_AA, 0, 0.3);
+        cv::circle(tmp_image, cv::Point(index(1), index(0)), 5, cv::Scalar(255, 0, 0), -1);
+        cv::imshow("debug", tmp_image);
+        cv::waitKey(0);
+
+        minHeap.pop();
+        if (reachGoal(*currentNode))
+        {
+            Node goal_node;
+            goal_node.position = goal_.head(2);
+            goal_node.PreFootstepNode = currentNode;
+            goal_node.ori = goal_.z();
+            break;
+        }
+        double yaw;
+        if (getYaw(*currentNode, yaw))
+        {
+            // LOG(INFO)<<"yaw: "<<yaw;
+            // // 力决定的方向
+            // cv::Point direct_start(index(1), index(0));
+            // cv::Point direct_end(index(1) - 10 * std::sin(yaw), index(0) - 10 * std::cos(yaw));
+            // cv::arrowedLine(tmp_image, direct_start, direct_end, cv::Scalar(0, 255, 0), 2, cv::LINE_AA, 0, 0.3);
+            // cv::imshow("debug", tmp_image);
+            // cv::waitKey(0);
+
+            // 获取障碍物势能场
+            Eigen::Vector2d SAPf;
+            if (getSAPF(*currentNode, SAPf))
+            {
+                LOG(INFO)<<"SAPF: "<<SAPf.transpose();
+                double tmp_yaw = std::atan2(SAPf(1), SAPf(0));
+                cv::Point direct_start(index(1), index(0));
+                cv::Point direct_end(index(1) - 10 * std::sin(tmp_yaw), index(0) - 10 * std::cos(tmp_yaw));
+                cv::arrowedLine(tmp_image, direct_start, direct_end, cv::Scalar(0, 255, 0), 2, cv::LINE_AA, 0, 0.3);
+                cv::imshow("debug", tmp_image);
+                cv::waitKey(0);
+            }
+            // 获取终点势能场
+            Eigen::Vector2d AttForce;
+            if (AttPotential(*currentNode, AttForce))
+            {
+                LOG(INFO)<<"AttForce: "<<AttForce.transpose();
+                double tmp_yaw = std::atan2(AttForce(1), AttForce(0));
+                cv::Point direct_start(index(1), index(0));
+                cv::Point direct_end(index(1) - 10 * std::sin(tmp_yaw), index(0) - 10 * std::cos(tmp_yaw));
+                cv::arrowedLine(tmp_image, direct_start, direct_end, cv::Scalar(0, 0, 255), 2, cv::LINE_AA, 0, 0.3);
+                cv::imshow("debug", tmp_image);
+                cv::waitKey(0);
+            }
+            
+            std::vector<NodePtr> nodes;
+            if (transitions(currentNode, yaw, nodes))
+            {
+                // 所有扩展的nodes
+                for (auto & node : nodes)
+                {
+                    grid_map::Index node_index;
+                    map.getIndex(node->position, node_index);
+                    cv::circle(tmp_image, cv::Point(node_index(1), node_index(0)), 1, cv::Scalar(0, 255, 0), -1);
+                }
+                cv::imshow("debug", tmp_image);
+                cv::waitKey(0);
+
+                for (auto & node : nodes)
+                {
+                    minHeap.push(node);
+                }
+            }
+        }
+        else
+        {
+            LOG(ERROR)<<"can not get yaw";
+            return false;
+        }
+        LOG(INFO)<<"next iteration";
+    }
+    return true;
+}
+
 
 // 允许有一些nan的点，但是不允许有超过的点，
 // bool PathPlanning::isFeasible(grid_map::Index & index, double angle)
@@ -2080,38 +2629,31 @@ return;
 //         int maxFrequency;                           // 记录最大出现次数
 //         vector<Eigen::Vector3d> points;
 //         FrequencyTracker() : mostFrequentNumber(0), maxFrequency(0) {}
-
 //         void addNumber(int number, Eigen::Vector3d point) {
 //             points.emplace_back(point);
 //             // 更新哈希表
 //             frequencyMap[number]++;
-
 //             // 检查当前数的出现次数是否是最多的
 //             if (frequencyMap[number] > maxFrequency) {
 //                 mostFrequentNumber = number;
 //                 maxFrequency = frequencyMap[number];
 //             }
 //         }
-
 //         int getMostFrequentNumber() const {
 //             return mostFrequentNumber;
 //         }
-
 //         int getMaxFrequency() const {
 //             return maxFrequency;
 //         }
-
 //         vector<Eigen::Vector3d> getPoints()
 //         {
 //             return points;
 //         }        
 //     };
-
 // #ifdef DEBUG
 //     LOG(INFO)<<"CHECK IMAGE";
 //     cv::Mat check_image = pd.result;
 // #endif
-
 //     Eigen::AngleAxisd ax(angle, Eigen::Vector3d::UnitZ());
 //     grid_map::Position p2;
 //     if (map.getPosition(index, p2))
@@ -2196,8 +2738,7 @@ return;
 //                     LOG(INFO)<<"nan points";
 // #endif
 //                     return false;
-//                 }
-                
+//                 }         
 //             }
 //             else
 //             {
@@ -2254,7 +2795,6 @@ return;
 //     {
 //         return false;
 //     }
-    
 // }
 
 // 这种方式的虽然较为真实的表达出支撑面的情况，但是有在我们使用可行方向对应可行域聚类情况会有一个矛盾点
@@ -2390,7 +2930,6 @@ return;
 //         // 应用形态学操作：先膨胀再腐蚀（开操作），去除毛刺
 //         cv::Mat smoothedImage;
 //         cv::morphologyEx(image, smoothedImage, cv::MORPH_CLOSE, element);
-
 // #ifdef DEBUG
 //         // // 找出两个图像中不同的像素
 //         // cv::Mat differenceImage;
@@ -2414,10 +2953,11 @@ return;
 //         // 找到0-脚宽/2，这些区域的可通行型为NAN
 //         cv::Mat Nan_eroded;
 //         cv::Mat half_width_Element = cv::getStructuringElement(cv::MORPH_RECT, cv::Size((support_area.Button- 0.05)/map.getResolution() * 2 + 1, (support_area.Button - 0.05)/map.getResolution() * 2 + 1));
+//         // 腐蚀erode会导致白色区域变小，黑色区域变大
 //         cv::erode(smoothedImage, Nan_eroded, half_width_Element);
 
 // #ifdef DEBUG
-//         // 腐蚀erode会导致白色区域变小，黑色区域变大
+        
 //         // LOG(INFO)<<cv::countNonZero(smoothedImage)<<" "<<cv::countNonZero(Nan_eroded);
 //         // cv::imshow("Nan_eroded"+ std::to_string(i), Nan_eroded);
 //         // cv::waitKey(0);
@@ -2458,8 +2998,7 @@ return;
 //         std::vector<cv::Point> white_points;
 //         cv::findNonZero(CheckImage, white_points);
 
-//         // 这个地方建议加一个openmp
-        
+//         // 这个地方建议加一个openmp   
 //         // for (int j = 0; j < white_points.size(); j++)
 //         // {
 //         //     auto & cv_p = white_points[i];
@@ -2506,7 +3045,6 @@ return;
 //         //         }
 //         //     }
 //         // }
-        
 //         // #pragma omp parallel for reduction(+:Full_feasible,Nan_feasible)
 //         // for (auto & cv_p : white_points)
 //         // {
@@ -2631,6 +3169,7 @@ return;
 //                     Full_feasible.at<uchar>(cv_p) = 255;
 //                 }   
 //             }
+//             // 所有的全部为不可通行时
 //             if (!Nan_feasible_flag)
 //             {
 //                 if (Nan_feasible.at<uchar>(cv_p) == 0)
@@ -2638,6 +3177,7 @@ return;
 //                     Nan_feasible.at<uchar>(cv_p) = 255;
 //                 }  
 //             }
+//             // 这是不能全向通行只能部分角度通行的像素点
 //             if (!Full_feasible_flag && Nan_feasible_flag)
 //             {
 //                 check_Mat.at<uchar>(cv_p) = 255;
@@ -2671,8 +3211,6 @@ return;
 //     // cv::imshow("check_Mat onstacle a", check_Mat);
 //     // cv::waitKey(0);
 
-    
-
 //     // 图像的边界区域，将图像边界默认为不可通行，
 //     int rows = Nan_feasible.rows;
 //     int cols = Nan_feasible.cols;
@@ -2688,7 +3226,6 @@ return;
 //         Nan_feasible.row(rows - i - 1).setTo(255);
 //         Nan_feasible.col(i).setTo(255);
 //         Nan_feasible.col(cols - i -1).setTo(255);
-
 //         Full_feasible.row(i).setTo(0);
 //         Full_feasible.row(rows - i - 1).setTo(0);
 //         Full_feasible.col(i).setTo(0);
@@ -2704,11 +3241,11 @@ return;
 //     cv::waitKey(0);
 // }
 
+
 // bool PathPlanning::clustering()
 // {
 //     cv::imshow("check_Mat", check_Mat);
 //     cv::waitKey(0);
-
 // // 由于这部分check_Mat还有一些后续处理，所以，feasible_mat与check_Mat不一样
 //     // cv::Mat feasible_mat = cv::Mat::zeros(map.getSize().x(), map.getSize().y(), CV_8UC1);
 //     // for (int i = 0; i < feasible_mat.rows; i++)
@@ -2735,30 +3272,23 @@ return;
 //     //         if (!full_flag && Nan_flag)
 //     //         {
 //     //             feasible_mat.at<uchar>(i, j) = 255;
-//     //         }
-            
+//     //         } 
 //     //     }
 //     // }
 //     // cv::imshow("feasible_mat", feasible_mat);
 //     // cv::waitKey(0);
-    
-
 //     // cv::Mat region1, region2;
-
 //     // // 第一个图像为 255，第二个图像为 0 的区域
 //     // cv::Mat condition1 = (check_Mat == 255) & (feasible_mat == 0);  // 生成满足条件的掩码
 //     // condition1.convertTo(region1, CV_8U, 255);  // 将布尔掩码转换为二值图像，白色区域为满足条件的部分
-
 //     // // 第一个图像为 0，第二个图像为 255 的区域
 //     // cv::Mat condition2 = (check_Mat == 0) & (feasible_mat == 255);  // 生成满足条件的掩码
 //     // condition2.convertTo(region2, CV_8U, 255);  // 转换为二值图像，白色区域为满足条件的部分
-
 //     // // 显示结果
 //     // cv::imshow("Region1 (image1=255, image2=0)", region1);
 //     // cv::imshow("Region2 (image1=0, image2=255)", region2);
 //     // cv::waitKey(0);
 //     // return true;
-
 //     // 筛选出更严格的像素点，不能是直接里面总的可通行角度大于strict_section，应该是实际可通行的连续的角度不超过strict_section
 //     strictChecksMat = cv::Mat::zeros(map.getSize().x(), map.getSize().y(), CV_8UC1);
 //     for (int i = 0; i < strictChecksMat.cols; i++)
@@ -2839,7 +3369,6 @@ return;
 //     std::vector<cv::Vec4i> hierarchy;
 //     cv::findContours(strictChecksMat, contours, hierarchy, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_NONE);
 //     LOG(INFO)<<contours.size();
-  
 //     // 对每一个区域内的每个可通行方向获取其
 //     vector<DirectRegion> strict_direct_regions;
 //     // 4. 遍历每个轮廓并绘制到结果图像中
@@ -2849,24 +3378,20 @@ return;
 //         LOG(INFO)<<"I = "<<i;
 //         cv::Mat result = cv::Mat::zeros(check_Mat.size(), CV_8UC1);
 //         // 绘制当前轮廓
-//         cv::drawContours(result, contours, static_cast<int>(i), cv::Scalar(255), cv::FILLED);
-        
+//         cv::drawContours(result, contours, static_cast<int>(i), cv::Scalar(255), cv::FILLED); 
 //         cv::bitwise_and(strictChecksMat, result, result);
 //         // 对区域极小的区域，就不在考虑，直接不再考虑，对于障碍附近的点也不再考虑
 //         if (cv::countNonZero(result) < 10)
 //         {
 //             continue;
 //         }
-        
 //         cv::imshow("result" + std::to_string(i), result);
 //         cv::waitKey(0);
-
 //         // 每个区域内的像素，根据可通行角度进行聚类
 //         std::vector<cv::Point> white_points;
 //         cv::findNonZero(result, white_points);
 //         // std::unordered_map<int, vector<cv::Point> > histogram;
 //         vector< vector<cv::Point> > histogram(72);
-
 //         for (auto cv_point : white_points)
 //         {
 //             for (int j = 0; j < checks_Mat.size(); j++)
@@ -2877,7 +3402,6 @@ return;
 //                 }
 //             }
 //         }
-
 //         // // 找到最小的，根据投票票数和最小值，取出小于某个阈值的投票，再选取其中间断的，较长的
 //         // // for (auto & bin : histogram)
 //         // // {
@@ -2900,18 +3424,14 @@ return;
 //         // matplotlibcpp::title("Sample Histogram");
 //         // matplotlibcpp::xlabel("Category");
 //         // matplotlibcpp::ylabel("Values");
-
 //         // // 绘制图表
 //         // matplotlibcpp::plot(x, y);
 //         // // 显示图表
 //         // matplotlibcpp::show();
-
 //         // // 一个区域可能会有多个直方图
 //         vector< std::unordered_map<int, vector<cv::Point> > > histograms;
-
 //         // 只不过多了一个索引，并没有顺序
 //         std::unordered_map<int, vector<cv::Point> > single_histogram_tmp;
-
 //         for (int j = 0; j < histogram.size(); j++)
 //         {
 //             if (histogram.at(j).size() > 4)
@@ -2926,14 +3446,12 @@ return;
 //                 }
 //                 single_histogram_tmp.clear();
 //             }
-//         }
-        
+//         } 
 //         // 检查最后一个 histogram 是否被保存
 //         if (!single_histogram_tmp.empty())
 //         {
 //             histograms.emplace_back(single_histogram_tmp);
 //         }
-
 //         cout<<"result: "<<endl;
 //         cout<<histograms.size()<<endl;
 //         for(auto & his : histograms)
@@ -2945,7 +3463,6 @@ return;
 //             // std::cout<<std::endl;
 //         }
 //         cout<<"next........."<<endl; 
-
 //         // 一个区域内会有多个直方图，但是直方图肯定是顺序排列的，所以只需要检查第一个和最后一个是否分别包含0和71，即可判断该区域内的首尾两个直方图是否需要合并
 //         // 检查首尾需不需要合并 
 //         if (histograms.front().find(0) != histograms.front().end() && histograms.back().find(71) != histograms.back().end())
@@ -2963,8 +3480,7 @@ return;
 //                 std::cout<<"[ "<<bin.first<<", "<<bin.second.size()<<" ]"<<" ";
 //             }
 //             std::cout<<std::endl;
-//         }
-        
+//         } 
 //         // 如何考虑首尾的情况
 //         for (auto & his : histograms)
 //         {
@@ -3042,7 +3558,6 @@ return;
 //                             region.at<uchar>(cv_point) = 255;
 //                         }
 //                     }
-
 //                     LOG(INFO)<<min<<" "<<max;
 //                     strict_direct_region.min = min;
 //                     strict_direct_region.range = his.size();
@@ -3076,13 +3591,11 @@ return;
 //         // if (hierarchy[i][3] != -1)
 //         // {
 //         //     continue;
-//         // }
-        
+//         // }   
 //         // 3. 创建结果图像，初始化为全黑
 //         cv::Mat result = cv::Mat::zeros(check_Mat.size(), CV_8UC1);
 //         // 绘制当前轮廓
 //         cv::drawContours(result, contours_feasible, static_cast<int>(i), cv::Scalar(255), cv::FILLED);
-
 //         cv::bitwise_and(check_Mat, result, result);
 //         // cv::imshow("result", result);
 //         // cv::waitKey(0);
@@ -3130,14 +3643,12 @@ return;
 //             }
 //         } 
 //     }
-
 //     for (auto & dr : drs)
 //     {
 //         LOG(INFO)<<dr.min<<" "<<dr.range;
 //         cv::imshow("region----", dr.region);
 //         cv::waitKey(0);
 //     }
-
 //     // 将里面的每个region先腐蚀再膨胀，将里面的一个区域转成多个区域
 //     // 如果区域本来就比较小，进行小半径膨胀之后变成没有洞的，就直接把这个区域填充
 //     auto tmp_drs = drs;
@@ -3149,7 +3660,6 @@ return;
 //         std::vector<std::vector<cv::Point>> contours_out;
 //         std::vector<cv::Vec4i> hierarchy_out;
 //         cv::findContours(temp_image, contours_out, hierarchy_out, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_NONE);
-
 //         // 如果本身空洞很小，或者无洞，就直接使用原方向
 //         double inflation_radius0 = 0.04;
 //         int inflation_pixels0 = inflation_radius0/map.getResolution();
@@ -3185,7 +3695,6 @@ return;
 //             drs.emplace_back(temp_dr);
 //             continue;
 //         }
-
 //         // 如果这个区域经过0.15m的膨胀以后变成无动的，那么将此区域填充后的所有区域均为此方向对应的区域，使用扩充的方向
 //         double inflation_radius1 = 0.15;
 //         int inflation_pixels1 = inflation_radius1/map.getResolution();
@@ -3221,7 +3730,6 @@ return;
 //             drs.emplace_back(temp_dr);
 //             continue;
 //         }
-
 //         // 如果填充0.3m后变成无洞的区域，
 //         double inflation_radius2 = 0.3;
 //         int inflation_pixels2 = inflation_radius2/map.getResolution();
@@ -3231,8 +3739,7 @@ return;
 //         std::vector<std::vector<cv::Point>> contours2;
 //         std::vector<cv::Vec4i> hierarchy2;
 //         cv::findContours(direct_image2, contours2, hierarchy2, cv::RETR_CCOMP, cv::CHAIN_APPROX_NONE);
-//         small_hole_flag = true;
-        
+//         small_hole_flag = true;  
 //         for (int i = 0; i < contours2.size(); i++)
 //         {
 //             if (hierarchy2[i][3] != -1)
@@ -3294,10 +3801,8 @@ return;
 //             }
 //         }
 //     }
-
 //     // 找到所有聚类
 //     vector<vector<int>> clusters = g.findClusters();
-    
 //     for (auto & cluster : clusters)
 //     {
 //         for (auto & index : cluster)
@@ -3306,8 +3811,6 @@ return;
 //         }
 //         cout<<endl;
 //     }
-    
-
 //     // 根据聚类构造
 //     // CompareDR compareDR(map);
 //     // for (auto & cluster : clusters)
@@ -3322,11 +3825,8 @@ return;
 //     //     msr.merged_region = merged_region;
 //     //     std::sort(msr.merged_direct_regions.begin(), msr.merged_direct_regions.end(), compareDR);
 //     // }
-
 //     // 将聚类的块连成一串，并根据流体的形式引入吸引力，从而将一些不可能到达的区域直接不考虑
-    
 // }
-
 // vector<int> PathPlanning::getPlanePath(int start_plane, int goal_plane)
 // {
 //     struct Node
@@ -3335,28 +3835,22 @@ return;
 //     }
 //     // 也不是每个平面只能一次
 // }
-
 // std::vector<Node> PathPlanning::_convertClosedListToPath(std::unordered_map<int, Node>& closed_list, const Node& start, const Node& goal)
 // {
 //   std::vector<Node> path;
-
 //   auto current = closed_list.find(goal.id());
 //   while (current->second != start)
 //   {
 //     path.push_back(current->second);
-
 //     auto it = closed_list.find(current->second.pid());
 //     if (it != closed_list.end())
 //       current = it;
 //     else
 //       return {};
 //   }
-
 //   path.push_back(start);
-
 //   return path;
 // }
-
 // void PathPlanning::testisFeasible()
 // {
 //     grid_map::Index index(200, 92);

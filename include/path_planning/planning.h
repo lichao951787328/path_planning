@@ -10,7 +10,7 @@
 #include <list>
 #include <unordered_map>
 #include <unordered_set>
-#include <path_planning/nodes.h>
+// #include <path_planning/nodes.h>
 // 先判断终点所在的平面，再根据连通性进行规划
 
 #define DEBUG
@@ -29,7 +29,24 @@ struct SupportArea
     }
 };
 
+struct Node
+{
+    grid_map::Position position;
+    double ori;
+    double g_cost = 0;
+    double h_cost = 0;
+    double cost = 0;
+    std::shared_ptr<Node> PreFootstepNode = nullptr;
+};
+typedef std::shared_ptr<Node> NodePtr;
 
+struct CompareNode
+{
+    bool operator()(const NodePtr& a, const NodePtr& b) const
+    {
+        return a->cost > b->cost;
+    }
+};
 struct bin_preq
 {
     int angle; // 代表角度
@@ -168,7 +185,7 @@ private:
     Graph plane_graph;
     // 通过判断外轮廓有没有内轮廓，并根据内轮廓的面积大小，判断这块区域是不是都是障碍区域
     cv::Mat obstacle_layer;
-    vector<Eigen::Vector2d> obstacles;
+    // vector<Eigen::Vector2d> obstacles;
     double obstacle_inflation_radius;
     int full_size; // 支撑区域内cell数
     
@@ -182,18 +199,30 @@ private:
 
     vector<MergedDirectRegion> mdrs;
 
+    cv::Mat debug_image;
+
     string package_path;
-    
+    cv::Mat check_image;
+    vector<cv::Mat> obstacles;
+    cv::Mat goal_obstacle;
     cv::Mat strictChecksMat;
     int strict_section;
     double obstacle_length;
     // 对于一个区域而言，如果里面有可通行方向较全向的像素，那么肯定会有可通行方向单一的像素。反之不成立
     // 为了方便筛选出这些区域，这一步很重要，但是由于check_Mat可能存在非常杂乱的情况，这可能不方便筛选
     // 为此，我们筛选出checks_Mat中通行性局限性更强的像素点，并对这些像素点进行聚类，分割出可通行区域和可通行方向。再将这些区域与checks_Mat内包含这些区域且相邻的像素点合并，得到真实的可通行区域块及可通行方向
-    cv::Point2f ray_Dir; // 终点像素方向
 
+    cv::Mat full_feasible_region;
+    cv::Mat goal_vortex_region;
+    cv::Point2f ray_Dir; // 终点像素方向
+    double d_safe, d_vort, d_noinflu_offset, d_inf, d_noinflu;
+    double d_g_att = 5;
+    double d_g_att_th = 3;
+    int d_safe_rad, d_vort_rad, d_inf_rad, d_noinflu_rad;
+    string SAPF_X, SAPF_Y;
     int map_size_; 
     // Node start_, goal_;
+    Node start;
     Eigen::Vector3d start_, goal_;
     grid_map::Index start_index_, goal_index_;
     std::unordered_map<int, Node> sample_list_;  // set of sample nodes
@@ -201,6 +230,12 @@ private:
     double max_dist_;                            // max distance threshold
     double opti_sample_p_ = 0.05; 
     double step = 0.4; // 或许在找时需要变化长度，因为不一定正好是0.4
+    // 不往后走
+    vector<double> angles = {-90/57.3, -67.5/57.3, -45/57.3, -22.5/57.3, 0, 22.5/57.3, 45/57.3, 67.5/57.3, 90/57.3};
+
+    double goal_obstacle_cof = 3;
+    double gen_obstacle_cof = 2;
+    double att_cof = 1;
 public:
     PathPlanning(ros::NodeHandle & nodehand, grid_map::GridMap & map_, SupportArea support_area_, Eigen::Vector3d & start, Eigen::Vector3d & goal);
 
@@ -213,14 +248,42 @@ public:
     // std::vector<Node> _convertClosedListToPath(std::unordered_map<int, Node>& closed_list, const Node& start, const Node& goal);
     // int node2Index(Node & n);
     // Eigen::Vector2d repF();
+    bool reachGoal(Node & node);
+    void showAttPotential();
     void constructPlaneAwareMap();
+    void constructGoalVortexRegion();
     // void computeObstacles();
     void constructObstacleLayer(int chect_scope);
+    void constructFullFeasibleRegion(double safe_length);
+    void computeObstacles();
+    void computeRepObstacleGoal();
+    void computeRepObstacle();
     void computeRep();
+    void computeRadius(double d_safe, double d_vort, double d_noinflu_offset);
+    void mergeAllObstacle();
+    bool AttPotential(Node & node, Eigen::Vector2d & AttForce);
+    bool getYaw(Node & node, double & yaw);
+    bool ComputeNodeCost(NodePtr currentNodeP, NodePtr nextNodeP, double & cost);
+    bool getSAPF(Node & node, Eigen::Vector2d & SAPF);
+    void showSAPF();
+    void checkFeasibleDirect();
+    bool ComputeNodeCost(NodePtr currentNodeP, NodePtr nextNodeP);
+    bool isTraversbility(Node & node);
+    bool getAllPoints(Eigen::Vector2d TL, Eigen::Vector2d TR, Eigen::Vector2d BL, Eigen::Vector2d BR, vector<Eigen::Vector3d> & points);
+    bool subRegionSupportPlane(Eigen::Vector2d TL, Eigen::Vector2d TR, Eigen::Vector2d BL, Eigen::Vector2d BR, int & plane_index);
+    bool clustering();
+    void showSAPFMatplotlib();
     std::pair<cv::Mat, cv::Mat> getSegMoreAndLess(cv::Mat region, cv::Mat goal_region, cv::Point2f Dir);
     void goalDirectInImage(double yaw);
     void showRepImage();
     void showSAPFImage();
+    bool transitions(NodePtr currentNodeP, double yaw, std::vector<NodePtr> & nodes);
+    bool CheckTraversability(Node & node);
+    bool plan();
+    grid_map::GridMap inline getMap()
+    {
+        return map;
+    }
     // bool isFeasible(grid_map::Index & index, double angle);
     // bool isFeasibleNew(grid_map::Index & index, double angle);
 

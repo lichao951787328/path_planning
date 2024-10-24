@@ -150,7 +150,8 @@ include
 ## The recommended prefix ensures that target names across packages don't collide
 add_executable(${PROJECT_NAME}_node src/main.cpp)
 add_executable(test_gridmap src/test_gridmap.cpp)
-add_executable(planning src/planning.cpp src/planning_node.cpp src/nodes.cpp src/math_helper.cpp)
+# add_executable(planning src/planning.cpp src/planning_node.cpp src/nodes.cpp src/math_helper.cpp)
+add_executable(planning src/planning.cpp src/planning_node.cpp)
 
 ## Rename C++ executable without prefix
 ## The above recommended prefix causes long target names, the following renames the

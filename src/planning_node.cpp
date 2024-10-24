@@ -138,7 +138,22 @@ int main(int argc, char** argv)
     PathPlanning path_planning(nh, map, support_area, start, goal);
     path_planning.constructPlaneAwareMap();
     path_planning.constructObstacleLayer(6);
+    path_planning.constructFullFeasibleRegion(0.55);
     path_planning.computeRep();
+    path_planning.constructGoalVortexRegion();
+    path_planning.plan();
+    LOG(INFO)<<"PUB";
+    ros::Rate loop_rate(0.5);
+    while (ros::ok())
+    {
+        grid_map::GridMap map = path_planning.getMap();
+        grid_map_msgs::GridMap obstacle_goal_msg;
+        grid_map::GridMapRosConverter::toMessage(map, obstacle_goal_msg);
+        obstacle_goal_msg.info.header.frame_id = "map";
+        map_pub.publish(obstacle_goal_msg);
+        ros::spinOnce();
+    }
+    
 
     // 下面是通过rviz给定起点和终点
     // ros::Rate loop_rate(0.4);
@@ -164,7 +179,6 @@ int main(int argc, char** argv)
     //         start_get = false;
     //         goal_get = false;
     //     }
-        
     // }
     
 
