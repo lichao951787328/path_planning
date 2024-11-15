@@ -155,6 +155,8 @@ add_executable(planning src/planning.cpp src/planning_node.cpp)
 
 
 add_executable(path_smoother src/path_smoother_node.cpp src/path_smooth.cpp src/path_smoother.cpp)
+
+add_executable(pcd2globalmap src/pcd2globalmap.cpp)
 ## Rename C++ executable without prefix
 ## The above recommended prefix causes long target names, the following renames the
 ## target back to the shorter version for ease of user use
@@ -196,6 +198,11 @@ target_link_libraries(path_smoother
 ${catkin_LIBRARIES}
 ${OpenCV_LIBRARIES}
 glog::glog
+)
+
+target_link_libraries(pcd2globalmap
+${catkin_LIBRARIES}
+${PCL_LIBRARIES}
 )
 
 #############
