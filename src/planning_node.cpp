@@ -16,7 +16,7 @@
 #include <rosbag/view.h>
 #include <visualization_msgs/Marker.h>
 // 是否使用rviz来获取起点和终点
-// #define SET_BY_RVIZ
+#define SET_BY_RVIZ
 
 Eigen::Vector3d start, goal;
 bool start_get = false, goal_get = false;
@@ -230,13 +230,17 @@ int main(int argc, char** argv)
     //     }
     // }
 
+    string globalmap_bag_path, globalmap_topic;
+    nh.param("globalmap_bag_path", globalmap_bag_path, string("/home/lichao/catkin_pathplanning/src/path_planning/bag/globalmap.bag"));
+    nh.param("globalmap_topic", globalmap_topic, string("globalmap"));
+
     // 从bag中加载地图
     rosbag::Bag bag;
-    bag.open("/home/lichao/catkin_pathplanning/src/path_planning/bag/sim_map2.bag", rosbag::bagmode::Read);
+    bag.open(globalmap_bag_path, rosbag::bagmode::Read);
 
     // 使用 topic 名称来过滤消息
     std::vector<std::string> topics;
-    topics.push_back("path");
+    topics.push_back(globalmap_topic);
 
     rosbag::View view(bag, rosbag::TopicQuery(topics));
     grid_map_msgs::GridMap globalmap_msg;

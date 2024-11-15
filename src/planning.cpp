@@ -1547,6 +1547,7 @@ void PathPlanning::showRepImage()
 //     matplotlibcpp::show();
 // }
 
+// 注意要去除一些小的噪声障碍点，这些点是由于噪声引起，但是不能为此障碍附加势场
 void PathPlanning::computeObstacles()
 {
     LOG(INFO)<<"computeObstacles";
@@ -1571,6 +1572,16 @@ void PathPlanning::computeObstacles()
             // 对一障碍，不要凸包也可以
             std::vector<std::vector<cv::Point>> Contours = {hull};
             cv::drawContours(obstacle, Contours, 0, cv::Scalar(255), cv::FILLED);
+
+            // 如果障碍太小，就不能加入
+            std::vector<cv::Point> whitePixels;
+            cv::findNonZero(obstacle, whitePixels);
+            if (whitePixels.size() < 35)
+            {
+                continue;
+            }
+            
+
             obstacles.emplace_back(obstacle);
 #ifdef DEBUG 
             LOG(INFO)<<"show obstacle";
@@ -1603,6 +1614,13 @@ void PathPlanning::computeObstacles()
             // cv::convexHull(obstacle, hull);
             std::vector<std::vector<cv::Point>> hullContours = {hull};
             cv::drawContours(check_image, hullContours, 0, cv::Scalar(255), cv::FILLED);
+
+            std::vector<cv::Point> whitePixels;
+            cv::findNonZero(check_image, whitePixels);
+            if (whitePixels.size() < 35)
+            {
+                continue;
+            }
             // 终点障碍区域
             cv::drawContours(goal_obstacle, hullContours, 0, cv::Scalar(255), cv::FILLED);
 #ifdef DEBUG 
@@ -1875,9 +1893,9 @@ void PathPlanning::computeRepObstacleGoal()
         // // 内部区域再腐蚀一次
         // cv::erode(hull_mat, hull_mat, element);
         // 每3层，显示一次
-#ifdef DEBUG         
-        std::vector<double> x_start, y_start, u, v;
-#endif
+// #ifdef DEBUG         
+//         std::vector<double> x_start, y_start, u, v;
+// #endif
         std::vector<double> x_start, y_start, u, v;
         for (int inflation_radius = 1; inflation_radius <= planning_param.d_noinflu_rad_goal; inflation_radius++)
         {
@@ -1933,9 +1951,9 @@ void PathPlanning::computeRepObstacleGoal()
             if (inflation_radius <= planning_param.d_safe_rad_goal || inflation_radius > planning_param.d_inf_rad_goal)
             {
                 // LOG(INFO)<<"GENERAL DORECT";
-#ifdef DEBUG                
-                cv::Mat RefImage = cv::Mat::zeros(map.getSize(). x(), map.getSize().y(), CV_8UC1);
-#endif
+// #ifdef DEBUG                
+//                 cv::Mat RefImage = cv::Mat::zeros(map.getSize(). x(), map.getSize().y(), CV_8UC1);
+// #endif
                 cv::Mat RefImage = cv::Mat::zeros(map.getSize(). x(), map.getSize().y(), CV_8UC1);
                 // cv::Mat contour_image = cv::Mat::zeros(map.getSize(). x(), map.getSize().y(), CV_8UC1);
                 // std::vector<double> x_start, y_start, u, v;
@@ -2087,9 +2105,9 @@ void PathPlanning::computeRepObstacleGoal()
                 // cv::imshow("more_image_1", segMats.second);
                 // cv::waitKey(0);
                 
-#ifdef DEBUG
-                cv::Mat RefImage = cv::Mat::zeros(map.getSize(). x(), map.getSize().y(), CV_8UC1);
-#endif
+// #ifdef DEBUG
+//                 cv::Mat RefImage = cv::Mat::zeros(map.getSize(). x(), map.getSize().y(), CV_8UC1);
+// #endif
                 cv::Mat RefImage = cv::Mat::zeros(map.getSize(). x(), map.getSize().y(), CV_8UC1);
                 // cv::Mat contour_image = cv::Mat::zeros(map.getSize(). x(), map.getSize().y(), CV_8UC1);
                 // std::vector<double> x_start, y_start, u, v;
@@ -2190,9 +2208,9 @@ void PathPlanning::computeRepObstacle()
 #endif
         // 形态学闭运算将直角变成圆角
         // cv::morphologyEx(obstacle, obstacle, cv::MORPH_CLOSE, element);
-#ifdef DEBUG
-        std::vector<double> x_start, y_start, u, v;
-#endif
+// #ifdef DEBUG
+//         std::vector<double> x_start, y_start, u, v;
+// #endif
         std::vector<double> x_start, y_start, u, v;
         cv::Mat contour = cv::Mat::zeros(obstacle_layer.size(), CV_8UC1);
         for (int inflation_radius = 1; inflation_radius <= planning_param.d_noinflu_rad_gen; inflation_radius++)

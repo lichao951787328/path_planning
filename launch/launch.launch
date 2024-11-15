@@ -27,6 +27,10 @@
   
   <param name="support_ratio" type="double" value="0.55"/>
   <param name="step" type="double" value="0.4"/>
+
+  <param name="globalmap_bag_path" type="string" value="/home/lichao/catkin_pathplanning/src/path_planning/bag/globalmap.bag"/>
+  <param name="globalmap_topic" type="string" value="globalmap"/>
+
   <!-- Elevation mapping node -->
   <node pkg="path_planning" type="planning" name="planning" output="screen" />
 
