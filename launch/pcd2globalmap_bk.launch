@@ -1,0 +1,18 @@
+<launch>
+  <param name="cloud_path" type="string" value="/home/lichao/catkin_pathplanning/src/global_map/data/globalmap.pcd"/>
+  <param name="height_layer" type="string" value="elevation"/>
+  <param name="globalmap_frameid" type="string" value="map"/>  
+  <param name="globalmap_topic" type="string" value="globalmap"/>
+  <param name="globalmap_path" type="string" value="/home/lichao/catkin_pathplanning/src/path_planning/bag/globalmap.bag"/>
+  <param name="resolution" type="double" value="0.02"/>
+  <param name="off_set" type="double" value="0.2"/>
+  <!-- Elevation mapping node -->
+  <node pkg="path_planning" type="pcd2globalmap" name="pcd2globalmap" output="screen" />
+
+  <!-- Launch visualizations for the resulting elevation map -->
+  <!-- <include file="$(find path_planning)/launch/path_smooth.launch" /> -->
+
+  <!-- Launch RViz with the demo configuration -->
+  <node name="pcd2globalmap_rviz" pkg="rviz" type="rviz" args="-d $(find path_planning)/rviz/pcd2globalmap.rviz" />
+
+</launch>

@@ -1,18 +1,43 @@
 <launch>
-  <param name="cloud_path" type="string" value="/home/lichao/catkin_pathplanning/src/global_map/data/globalmap.pcd"/>
-  <param name="height_layer" type="string" value="elevation"/>
-  <param name="globalmap_frameid" type="string" value="map"/>  
+  <param name="support_area_up" type="double" value="0.15"/>
+  <param name="support_area_button" type="double" value="0.1"/>
+  <param name="support_area_left" type="double" value="0.165"/>
+  <param name="support_area_right" type="double" value="0.165"/>
+  <param name="obstacle_inflation_radius" type="double" value="0.5"/>
+  <param name="obstacle_length" type="double" value="2.0"/>
+  <param name="obstacle_rad" type="int" value="6"/>
+  <param name="safe_region_radius" type="double" value="0.55"/>
+
+  <param name="d_safe_goal" type="double" value="0.6"/>
+  <param name="d_vort_goal" type="double" value="1.5"/>
+  <param name="d_noinflu_offset_goal" type="double" value="0.6"/>
+
+  <param name="d_safe_gen" type="double" value="0.4"/>
+  <param name="d_vort_gen" type="double" value="1.2"/>
+  <param name="d_noinflu_offset_gen" type="double" value="0.4"/>
+
+  <param name="goal_obstacle_cof" type="double" value="9"/>
+  <param name="gen_obstacle_cof" type="double" value="6"/>
+
+  <!-- 终点吸引力距离阈值 -->
+  <param name="d_g_att" type="double" value="4"/>
+  <!-- 终点吸引力系数 -->
+  <!-- <param name="d_g_att_cof" type="double" value="0.25"/> -->
+  <param name="d_g_att_cof" type="double" value="0.35"/>
+  
+  <param name="support_ratio" type="double" value="0.55"/>
+  <param name="step" type="double" value="0.4"/>
+
+  <param name="globalmap_bag_path" type="string" value="/home/lichao/catkin_pathplanning/src/path_planning/bag/globalmap.bag"/>
   <param name="globalmap_topic" type="string" value="globalmap"/>
-  <param name="globalmap_path" type="string" value="/home/lichao/catkin_pathplanning/src/path_planning/bag/globalmap.bag"/>
-  <param name="resolution" type="double" value="0.02"/>
-  <param name="off_set" type="double" value="0.2"/>
+
   <!-- Elevation mapping node -->
   <node pkg="path_planning" type="pcd2globalmap" name="pcd2globalmap" output="screen" />
 
   <!-- Launch visualizations for the resulting elevation map -->
-  <!-- <include file="$(find path_planning)/launch/path_smooth.launch" /> -->
+  <include file="$(find path_planning)/launch/path_smooth.launch" />
 
   <!-- Launch RViz with the demo configuration -->
-  <node name="pcd2globalmap_rviz" pkg="rviz" type="rviz" args="-d $(find path_planning)/rviz/pcd2globalmap.rviz" />
+  <node name="rviz" pkg="rviz" type="rviz" args="-d $(find path_planning)/rviz/rviz.rviz" />
 
 </launch>

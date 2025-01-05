@@ -101,6 +101,7 @@ pcl::PointCloud<pcl::PointXYZ> gridMap2Pointcloud(grid_map::GridMap & map)
     return pc;
 }
 
+// 实际使用时，可以先把地面滤除，
 void PathPlanning::constructPlaneAwareMap()
 {
     pcl::PointCloud<pcl::PointXYZ> pc = gridMap2Pointcloud(map);

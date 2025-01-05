@@ -11,6 +11,7 @@ Panels:
         - /Path1/Offset1
         - /Path2
         - /Path2/Offset1
+        - /Axes2
       Splitter Ratio: 0.5
     Tree Height: 1106
   - Class: rviz/Selection
@@ -133,6 +134,15 @@ Visualization Manager:
       Shaft Length: 0.10000000149011612
       Topic: /smoothed_path
       Unreliable: false
+      Value: true
+    - Alpha: 1
+      Class: rviz/Axes
+      Enabled: true
+      Length: 1
+      Name: Axes
+      Radius: 0.10000000149011612
+      Reference Frame: <Fixed Frame>
+      Show Trail: false
       Value: true
   Enabled: true
   Global Options:

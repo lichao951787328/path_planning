@@ -20,11 +20,18 @@ find_package(catkin REQUIRED COMPONENTS
   peac
 )
 
+find_package(PCL 1.10 REQUIRED
+  COMPONENTS
+    common
+    filters
+    io
+    segmentation
+)
+
 ## System dependencies are found with CMake's conventions
 # find_package(Boost REQUIRED COMPONENTS system)
 find_package(glog REQUIRED)
 find_package(OpenCV REQUIRED)
-find_package(PCL REQUIRED)
 find_package(OpenMP REQUIRED)
 find_package(Python3 COMPONENTS Interpreter Development REQUIRED)
 find_package(Python3 COMPONENTS NumPy)
@@ -131,7 +138,10 @@ include_directories(
 include
   ${catkin_INCLUDE_DIRS}
   ${OpenCV_INCLUDE_DIRS}
-  ${PCL_INCLUDE_DIRS}
+  ${PCL_COMMON_INCLUDE_DIRS}
+  ${PCL_FILTERS_INCLUDE_DIRS}
+  ${PCL_SEGMENTATION_INCLUDE_DIRS}
+  ${PCL_IO_INCLUDE_DIRS}
   ${PYTHON_INCLUDE_DIRS}
 )
 
@@ -156,7 +166,11 @@ add_executable(planning src/planning.cpp src/planning_node.cpp)
 
 add_executable(path_smoother src/path_smoother_node.cpp src/path_smooth.cpp src/path_smoother.cpp)
 
-add_executable(pcd2globalmap src/pcd2globalmap.cpp)
+# add_executable(pcd2globalmap src/pcd2globalmap.cpp)
+
+add_executable(pcd2globalmap src/planning_node_realworld.cpp src/planning_realworld.cpp)
+
+add_executable(preprocess src/cloud_preprocess.cpp)
 ## Rename C++ executable without prefix
 ## The above recommended prefix causes long target names, the following renames the
 ## target back to the shorter version for ease of user use
@@ -173,7 +187,9 @@ target_link_libraries(${PROJECT_NAME}_node
   ${OpenCV_LIBRARIES}
   glog::glog
   ${peac_LIBRARIES}
-  ${PCL_LIBRARIES}
+  ${PCL_COMMON_LIBRARIES}
+  ${PCL_IO_LIBRARIES}
+  ${PCL_FILTERS_LIBRARIES}
 )
 
 target_link_libraries(test_gridmap
@@ -181,7 +197,9 @@ target_link_libraries(test_gridmap
   ${OpenCV_LIBRARIES}
   glog::glog
   ${peac_LIBRARIES}
-  ${PCL_LIBRARIES}
+  ${PCL_COMMON_LIBRARIES}
+  ${PCL_IO_LIBRARIES}
+  ${PCL_FILTERS_LIBRARIES}
 )
 
 target_link_libraries(planning
@@ -189,7 +207,9 @@ target_link_libraries(planning
   ${OpenCV_LIBRARIES}
   glog::glog
   ${peac_LIBRARIES}
-  ${PCL_LIBRARIES}
+  ${PCL_COMMON_LIBRARIES}
+  ${PCL_IO_LIBRARIES}
+  ${PCL_FILTERS_LIBRARIES}
   ${PYTHON_LIBRARIES}
   OpenMP::OpenMP_CXX
 )
@@ -202,7 +222,16 @@ glog::glog
 
 target_link_libraries(pcd2globalmap
 ${catkin_LIBRARIES}
-${PCL_LIBRARIES}
+  ${PCL_IO_LIBRARIES}
+  glog::glog
+)
+
+target_link_libraries(preprocess
+${PCL_COMMON_LIBRARIES}
+  ${PCL_IO_LIBRARIES}
+  ${PCL_FILTERS_LIBRARIES}
+  ${PCL_SEGMENTATION_LIBRARIES}
+  glog::glog
 )
 
 #############

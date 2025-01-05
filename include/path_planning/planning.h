@@ -15,7 +15,7 @@
 // 先判断终点所在的平面，再根据连通性进行规划
 
 // #define DEBUG
-// #define SHOW_PLANNING_PROCESS
+#define SHOW_PLANNING_PROCESS
 struct SupportArea
 {
     double Up, Button, Left, Right;
@@ -229,6 +229,11 @@ private:
     cv::Mat goal_obstacle;
     cv::Point seg_point; // 分割轮廓区域的点
     cv::Point2f seg_normal;
+
+    // 确定终点障碍区域分割点的线点
+    cv::Point2f seg_point1;
+    cv::Point2f seg_point2;
+
     // 构建能够全向通行的区域
     cv::Mat full_feasible_region;
     cv::Point2f ray_Dir; // 终点像素方向
@@ -273,6 +278,7 @@ public:
     void showSAPFImage();
     void showJoinForceImage();
     bool getNearestPointInContour(vector<cv::Point> & contour, cv::Point & nearestPoint);
+    bool getNearestPointInContourNew(vector<cv::Point> & contour, cv::Point & nearestPoint);
     // std::pair<cv::Mat, cv::Mat> regionSeg(vector<cv::Point> & contour, cv::Point segPoint, cv::Point2f Dir);
     vector<cv::Point> raySeg(cv::Point2f rayOrigin, vector<cv::Point> & contour);
     std::pair<vector<cv::Point>, vector<cv::Point> > raySegLeftRight(cv::Point2f rayOrigin, vector<cv::Point> & contour);
@@ -292,6 +298,8 @@ public:
     bool ComputeNodeCostAstar(NodePtr NodeP);
     bool isCorss(NodePtr currentNodeP);
     bool isTraversbility(Node & node);
+    bool isTraversbilityTra(Node & node);
+    bool SqurePoints(Eigen::Vector2d TL, Eigen::Vector2d TR, Eigen::Vector2d BL, Eigen::Vector2d BR, vector<Eigen::Vector3d> & points);
     bool getAllPoints(Eigen::Vector2d TL, Eigen::Vector2d TR, Eigen::Vector2d BL, Eigen::Vector2d BR, vector<Eigen::Vector3d> & points);
     bool subRegionSupportPlane(Eigen::Vector2d TL, Eigen::Vector2d TR, Eigen::Vector2d BL, Eigen::Vector2d BR, int & plane_index);
     bool transitions(NodePtr currentNodeP, double yaw, std::vector<NodePtr> & nodes);
