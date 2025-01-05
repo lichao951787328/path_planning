@@ -161,7 +161,7 @@ include
 add_executable(${PROJECT_NAME}_node src/main.cpp)
 add_executable(test_gridmap src/test_gridmap.cpp)
 # add_executable(planning src/planning.cpp src/planning_node.cpp src/nodes.cpp src/math_helper.cpp)
-add_executable(planning src/planning.cpp src/planning_node.cpp)
+# add_executable(planning src/planning.cpp src/planning_node.cpp)
 
 
 add_executable(path_smoother src/path_smoother_node.cpp src/path_smooth.cpp src/path_smoother.cpp)
@@ -202,17 +202,17 @@ target_link_libraries(test_gridmap
   ${PCL_FILTERS_LIBRARIES}
 )
 
-target_link_libraries(planning
-  ${catkin_LIBRARIES}
-  ${OpenCV_LIBRARIES}
-  glog::glog
-  ${peac_LIBRARIES}
-  ${PCL_COMMON_LIBRARIES}
-  ${PCL_IO_LIBRARIES}
-  ${PCL_FILTERS_LIBRARIES}
-  ${PYTHON_LIBRARIES}
-  OpenMP::OpenMP_CXX
-)
+# target_link_libraries(planning
+#   ${catkin_LIBRARIES}
+#   ${OpenCV_LIBRARIES}
+#   glog::glog
+#   ${peac_LIBRARIES}
+#   ${PCL_COMMON_LIBRARIES}
+#   ${PCL_IO_LIBRARIES}
+#   ${PCL_FILTERS_LIBRARIES}
+#   ${PYTHON_LIBRARIES}
+#   OpenMP::OpenMP_CXX
+# )
 
 target_link_libraries(path_smoother
 ${catkin_LIBRARIES}

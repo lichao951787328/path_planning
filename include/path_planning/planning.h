@@ -15,7 +15,7 @@
 // 先判断终点所在的平面，再根据连通性进行规划
 
 // #define DEBUG
-#define SHOW_PLANNING_PROCESS
+// #define SHOW_PLANNING_PROCESS
 struct SupportArea
 {
     double Up, Button, Left, Right;
@@ -276,7 +276,7 @@ public:
     std::pair<cv::Mat, cv::Mat> getSegMoreAndLess(cv::Mat region, cv::Mat goal_region, cv::Point2f Dir);
     void showRepImage();
     void showSAPFImage();
-    void showJoinForceImage();
+    // void showJoinForceImage();
     bool getNearestPointInContour(vector<cv::Point> & contour, cv::Point & nearestPoint);
     bool getNearestPointInContourNew(vector<cv::Point> & contour, cv::Point & nearestPoint);
     // std::pair<cv::Mat, cv::Mat> regionSeg(vector<cv::Point> & contour, cv::Point segPoint, cv::Point2f Dir);
@@ -303,10 +303,8 @@ public:
     bool getAllPoints(Eigen::Vector2d TL, Eigen::Vector2d TR, Eigen::Vector2d BL, Eigen::Vector2d BR, vector<Eigen::Vector3d> & points);
     bool subRegionSupportPlane(Eigen::Vector2d TL, Eigen::Vector2d TR, Eigen::Vector2d BL, Eigen::Vector2d BR, int & plane_index);
     bool transitions(NodePtr currentNodeP, double yaw, std::vector<NodePtr> & nodes);
-    bool transitionsAstar(NodePtr currentNodeP, std::vector<NodePtr> & nodes);
     bool CheckTraversability(Node & node);
     bool plan();
-    bool planAstar();
     bool processing();
 
     nav_msgs::Path inline getPath()
