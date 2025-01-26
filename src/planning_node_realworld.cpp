@@ -21,7 +21,7 @@
 #include <grid_map_filters/MeanInRadiusFilter.hpp>
 // 是否使用rviz来获取起点和终点
 #define SET_BY_RVIZ
-
+#define IN_PAINT
 Eigen::Vector3d start, goal;
 bool start_get = false, goal_get = false;
 
@@ -175,7 +175,10 @@ int main(int argc, char** argv)
     // 从采集的点云中转换成高程图
     
     pcl::PointCloud<pcl::PointXYZ> pointcloud;
+    // 修过的点云
     pcl::io::loadPCDFile("/home/lichao/catkin_pathplanning/src/path_planning/data/globalmap_filte_seg.pcd", pointcloud);
+    // 原始点云
+    // pcl::io::loadPCDFile("/home/lichao/catkin_pathplanning/src/path_planning/data/globalmap.pcd", pointcloud);
     // 计算点云在x，y方向的中点及在x y方向上点离中点的最远距离
     Eigen::Vector4f centroid;
     pcl::compute3DCentroid(pointcloud, centroid);
@@ -204,12 +207,15 @@ int main(int argc, char** argv)
 
     // 创建一个GridMap对象
     grid_map::GridMap global_map({"elevation"});
+    // grid_map::GridMap global_map;
+    
 
     // grid_map::MeanInRadiusFilter ;
 
     // 设置GridMap的分辨率和尺寸
     double resolution = 0.02;  // 设置分辨率
     global_map.setGeometry(grid_map::Length(2 * max_distance_x, 2 * max_distance_y), resolution, grid_map::Position(x_center, y_center));
+    // global_map.add("elevation", 0.0);
     // global_map;
     global_map.setFrameId("map");
     // 填充GridMap的高程数据
@@ -221,6 +227,8 @@ int main(int argc, char** argv)
             global_map.atPosition("elevation", position) = point.z;
         }
     }
+
+#ifdef IN_PAINT
 
     global_map.add("inpaint_mask", 0.0);
     string height_layer = "elevation";
@@ -246,32 +254,7 @@ int main(int argc, char** argv)
     cv::Size kernelSize(3, 3);  // 5x5 高斯核
     double sigmaX = 1.2;        // X 方向的标准差
     double sigmaY = 1.2;        // Y 方向的标准差
-    // cv::Mat smoothedImage = cv::Mat::zeros(originalImage.size(), originalImage.type());
-    // for (int i = 1; i < originalImage.rows - 1; i++) 
-    // {  // 从1开始到rows-1，避免越界
-    //     for (int j = 1; j < originalImage.cols - 1; j++) 
-    //     {  // 从1开始到cols-1，避免越界
-    //         cv::Mat region = originalImage(cv::Rect(j - 1, i - 1, 3, 3));  // 3x3区域
-    //         double mean = cv::mean(region)[0];  // 计算该区域的平均值
-    //         double diff = cv::norm(region - mean, cv::NORM_L2);  // 计算区域与平均值的差异
-    //         // LOG(INFO) << "diff: " << diff;
-            
-    //         // 如果差异非常大，认为是孤立点，需要平滑
-    //         if (diff > 1) 
-    //         {
-    //             // 对孤立点进行平滑
-    //             cv::GaussianBlur(originalImage(cv::Rect(j - 1, i - 1, 3, 3)), smoothedImage(cv::Rect(j - 1, i - 1, 3, 3)), cv::Size(5, 5), sigmaX, sigmaY);
-    //         } 
-    //         else 
-    //         {
-    //             // 否则，保持原始值
-    //             smoothedImage.at<uchar>(i, j) = originalImage.at<uchar>(i, j);
-    //         }
-    //     }
-    // }
-    // cv::imshow("smoothedImage", smoothedImage);
-    // cv::waitKey(0);
-    // LOG(INFO)<<"ddd";
+   
     // 3. 应用高斯滤波
     cv::Mat smoothedImage;
     cv::GaussianBlur(originalImage, smoothedImage, kernelSize, sigmaX, sigmaY);
@@ -283,7 +266,7 @@ int main(int argc, char** argv)
         LOG(INFO)<<"add layer success";
     }
     
-
+#endif
 
     // const double radiusInPixels = 0.1 / global_map.getResolution();
     // cv::inpaint(originalImage, mask, filledImage, radiusInPixels, cv::INPAINT_NS);
@@ -333,7 +316,7 @@ int main(int argc, char** argv)
     // goal[0] = 7.21435;
     // goal[1] = 2.10046;
     // goal[2] = 0;
-    
+    sleep(2);
 
     LOG(INFO)<<"PUB";
     // 下面是通过rviz给定起点和终点
