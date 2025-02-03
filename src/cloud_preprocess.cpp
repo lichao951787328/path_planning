@@ -48,7 +48,7 @@ int main(int argc, char **argv)
     // Mandatory
     seg.setModelType(pcl::SACMODEL_PLANE);
     seg.setMethodType(pcl::SAC_RANSAC);
-    seg.setDistanceThreshold(0.03);
+    seg.setDistanceThreshold(0.02);
 
     seg.setInputCloud(cloud_ptr);
     seg.segment(*inliers, *coefficients);
@@ -93,7 +93,7 @@ int main(int argc, char **argv)
             cloud_above_plane->points.push_back(point);
         }
     }
-
+    std::cout<<"plane coefficients: "<<coefficients->values[0]<<" "<<coefficients->values[1]<<" "<<coefficients->values[2]<<" "<<coefficients->values[3]<<std::endl;
     LOG(INFO)<<"ABOVE SIZE: "<<cloud_above_plane->points.size();
     // Transform the points so that the distance to the plane is reflected in the z-coordinate
     for (auto& point : cloud_above_plane->points)
@@ -105,6 +105,7 @@ int main(int argc, char **argv)
     filtered_pointcloud.height = 1;
     filtered_pointcloud.width = filtered_pointcloud.points.size();
     pcl::io::savePCDFileASCII("/home/lichao/catkin_pathplanning/src/path_planning/data/globalmap_filte.pcd", filtered_pointcloud);
+    // 后续还需要在cloudcompare里将点云中的一些噪点删除
     return 0;
 }
 
