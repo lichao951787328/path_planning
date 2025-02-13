@@ -18,6 +18,10 @@ find_package(catkin REQUIRED COMPONENTS
   grid_map_ros
   grid_map_msgs
   peac
+  tf2
+  geometry_msgs
+  tf2_ros
+  tf2_geometry_msgs
 )
 
 find_package(PCL 1.10 REQUIRED
@@ -170,7 +174,11 @@ add_executable(path_smoother src/path_smoother_node.cpp src/path_smooth.cpp src/
 
 add_executable(pcd2globalmap src/planning_node_realworld.cpp src/planning_realworld.cpp)
 
+add_executable(global_pathplanning src/planning_node_realworld_0212.cpp src/planning_realworld.cpp)
+
 add_executable(preprocess src/cloud_preprocess.cpp)
+
+add_executable(flat_ground src/flatElevationMap.cpp)
 ## Rename C++ executable without prefix
 ## The above recommended prefix causes long target names, the following renames the
 ## target back to the shorter version for ease of user use
@@ -226,11 +234,23 @@ ${catkin_LIBRARIES}
   glog::glog
 )
 
+target_link_libraries(global_pathplanning
+${catkin_LIBRARIES}
+  ${PCL_IO_LIBRARIES}
+  glog::glog
+)
+
 target_link_libraries(preprocess
 ${PCL_COMMON_LIBRARIES}
   ${PCL_IO_LIBRARIES}
   ${PCL_FILTERS_LIBRARIES}
   ${PCL_SEGMENTATION_LIBRARIES}
+  glog::glog
+)
+
+
+target_link_libraries(flat_ground
+${catkin_LIBRARIES}
   glog::glog
 )
 

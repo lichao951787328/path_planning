@@ -1,3 +1,11 @@
+/*
+ * @Author: lichao951787328 951787328@qq.com
+ * @Date: 2025-02-12 10:15:31
+ * @LastEditors: lichao951787328 951787328@qq.com
+ * @LastEditTime: 2025-02-12 23:10:33
+ * @FilePath: /path_planning/src/path_smoother.cpp
+ * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
+ */
 #include <path_planning/path_smoother.h>
 
 namespace path_smooth
@@ -28,7 +36,7 @@ void path_smoother::pathCallback(const nav_msgs::Path::ConstPtr & msg)
 
 void path_smoother::mapCallback(const grid_map_msgs::GridMap::ConstPtr & msg)
 {
-    ROS_INFO("Received map");
+    // ROS_INFO("Received map");
     grid_map::GridMapRosConverter::fromMessage(*msg, map);
     map_received = true;
     run();
