@@ -7,6 +7,7 @@
   <param name="vorObsDMax" type="double" value="0.6"/>
   <param name="obsDMax" type="double" value="0.8"/>
   <param name="kappaMax" type="double" value="0.5"/> -->
+  <param name="globalmap_frame_id" type="string" value="global_map"/>
   <param name="Bspline_degree" type="int" value="8"/>
   <param name="Bspline_numPoints" type="int" value="100"/>
   <!-- Elevation mapping node -->

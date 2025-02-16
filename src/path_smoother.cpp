@@ -2,7 +2,7 @@
  * @Author: lichao951787328 951787328@qq.com
  * @Date: 2025-02-12 10:15:31
  * @LastEditors: lichao951787328 951787328@qq.com
- * @LastEditTime: 2025-02-12 23:10:33
+ * @LastEditTime: 2025-02-16 15:31:07
  * @FilePath: /path_planning/src/path_smoother.cpp
  * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
  */
@@ -18,6 +18,7 @@ path_smoother::path_smoother(ros::NodeHandle & n):nh(n)
     int Bspline_numPoints;
     nh.getParam("Bspline_degree", Bspline_degree);
     nh.getParam("Bspline_numPoints", Bspline_numPoints);
+    nh.getParam("globalmap_frame_id", globalmap_frame_id);
     bspline_param.degree = Bspline_degree;
     bspline_param.numPoints = Bspline_numPoints;
     bspline_param.printParam();
@@ -61,7 +62,7 @@ void path_smoother::run()
         }
         std::cout<<"Path length: "<<length<<std::endl;
         std::cout<<"Path smoothed: "<<smoothed_path.poses.size()<<std::endl;
-        smoothed_path.header.frame_id = "map";
+        smoothed_path.header.frame_id = globalmap_frame_id;
         path_pub.publish(smoothed_path);
     }
     
