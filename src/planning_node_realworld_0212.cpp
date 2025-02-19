@@ -24,6 +24,7 @@
 #include <tf2/exceptions.h>
 #include <glog/logging.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.h> 
+#include <path_smoother/path_smoother.h>
 // 实际使用时，使用定位+订阅全局地图+订阅终点
 // 起点使用tf树
 class PathPlanningPipline
@@ -34,7 +35,7 @@ private:
     ros::Subscriber globalmap_sub;
     ros::Publisher path_pub;
     ros::Publisher path_marker_pub;
-
+    ros::Publisher smooth_path_pub;
     grid_map::GridMap globalmap;
     bool get_globalmap = false;
 
@@ -54,6 +55,7 @@ public:
     void globalmapCallback(const grid_map_msgs::GridMap::ConstPtr globalmap_msg);
     vector<cv::Point> path2CvPoint(grid_map::GridMap & map, nav_msgs::Path & path);
     void map2ObstacleLayer(grid_map::GridMap & map, string heightLayer);
+    vector<cv::Point> path2CvPoint(nav_msgs::Path & path);
     visualization_msgs::Marker convertPath2visualmsgs(nav_msgs::Path & path);
     ~PathPlanningPipline();
 };
@@ -136,7 +138,7 @@ PathPlanningPipline::PathPlanningPipline(ros::NodeHandle & n):nh(n)
 
     goal_sub = nh.subscribe("/move_base_simple/goal", 1, &PathPlanningPipline::GoalCallback, this);
     globalmap_sub = nh.subscribe(globalmap_topic, 1, &PathPlanningPipline::globalmapCallback, this);
-
+    smooth_path_pub =  nh.advertise<nav_msgs::Path>("smooth_path", 1);
     path_pub = nh.advertise<nav_msgs::Path>("path", 1);
     path_marker_pub = nh.advertise<visualization_msgs::Marker>("path_marker", 1);
 
@@ -157,65 +159,6 @@ void PathPlanningPipline::globalmapCallback(const grid_map_msgs::GridMap::ConstP
         param.computeRadius();
         param.computeSupportNumTh();
     }
-}
-
-
-void PathPlanningPipline::map2ObstacleLayer(grid_map::GridMap & map, string heightLayer)
-{
-    // 把高程图转成障碍图，注意是根据高度梯度，只有在高度梯度下降达到某个程度的点才会被膨胀，生成障碍区域。
-    const float minValue = map.get("elevation").minCoeffOfFinites();
-    const float maxValue = map.get("elevation").maxCoeffOfFinites();
-
-    cv::Mat heightImage;
-    grid_map::GridMapCvConverter::toImage<unsigned char, 1>(map, "elevation", CV_8UC1, minValue, maxValue, heightImage);
-
-    // 计算水平和垂直梯度
-    cv::Mat grad_x, grad_y;
-    cv::Sobel(heightImage, grad_x, CV_32F, 1, 0, 3);
-    cv::Sobel(heightImage, grad_y, CV_32F, 0, 1, 3);
-
-    // 计算梯度幅值
-    cv::Mat grad_magnitude;
-    cv::magnitude(grad_x, grad_y, grad_magnitude);
-
-    // 计算梯度方向（以角度表示）
-    cv::Mat grad_angle;
-    cv::phase(grad_x, grad_y, grad_angle, true);
-
-    // 创建掩膜，用于膨胀
-    cv::Mat dilate_mask = cv::Mat::zeros(heightImage.size(), CV_8U);
-
-    // 遍历图像，根据梯度方向来选择性膨胀
-    for (int i = 1; i < heightImage.rows - 1; ++i) 
-    {
-        for (int j = 1; j < heightImage.cols - 1; ++j) 
-        {
-            // 获取当前像素的梯度方向
-            float angle = grad_angle.at<float>(i, j);
-
-            // 如果梯度方向指向下降的方向，则进行膨胀
-            // 这里的判断依据需要根据实际场景调整，比如检查角度的范围
-            if (angle >= 45 && angle <= 135) 
-            {
-                dilate_mask.at<uchar>(i, j) = 255;  // 例如设置为255代表膨胀
-            }
-        }
-    }
-}
-
-vector<cv::Point> PathPlanningPipline::path2CvPoint(grid_map::GridMap & map, nav_msgs::Path & path)
-{
-    vector<cv::Point> cv_points;
-    for (auto & point : path.poses)
-    {
-        grid_map::Position position(point.pose.position.x, point.pose.position.y);
-        grid_map::Index index;
-        if (map.getIndex(position, index))
-        {
-            cv_points.emplace_back(index.x(), index.y());
-        }
-    }
-    return cv_points;
 }
 
 // 起点终点都是相对于点云地图的，要转到全局地形地图坐标系下
@@ -289,12 +232,46 @@ void PathPlanningPipline::GoalCallback(const geometry_msgs::PoseStamped::Ptr msg
     PathPlanning path_planning(globalmap, start, goal, param);
     path_planning.processing();
     nav_msgs::Path path = path_planning.getPath();
-
-    // 规划的path转成cv点，传入顺滑器中
-
-
     path.header.frame_id = globalmap_frame_id;
     path_pub.publish(path);
+
+    cv::Mat obstacle_layer = path_planning.getObstacleVoronoi();
+    std::vector<cv::Point> points = path2CvPoint(path);
+    cv::bitwise_not(obstacle_layer, obstacle_layer);
+    PathSmoother path_smoother(obstacle_layer, points);
+    path_smoother.smoothPath();
+    
+    // 这是在图像坐标系下的角度和坐标，要转成地图坐标系下
+    std::vector<Pose2d> smooth_path_3d = path_smoother.getSmoothedPath();
+    nav_msgs::Path smooth_path;
+    for (int i = 0; i < smooth_path_3d.size(); i++)
+    {
+        Pose2d pose = smooth_path_3d[i];
+        geometry_msgs::PoseStamped pose_stamped;
+
+        grid_map::Index index(pose.y(), pose.x());
+        grid_map::Position3 position3;
+        if (globalmap.getPosition3("elevation", index, position3))
+        {
+            pose_stamped.pose.position.x = position3.x();
+            pose_stamped.pose.position.y = position3.y();
+            pose_stamped.pose.position.z = position3.z();
+        }
+
+        Eigen::AngleAxisd rotation_vector(pose.theta(), Eigen::Vector3d::UnitZ());
+        Eigen::Quaterniond quaternion(rotation_vector);
+        pose_stamped.pose.orientation.x = quaternion.x();
+        pose_stamped.pose.orientation.y = quaternion.y();
+        pose_stamped.pose.orientation.z = quaternion.z();
+        pose_stamped.pose.orientation.w = quaternion.w();
+        
+        smooth_path.poses.emplace_back(pose_stamped);
+    }
+    smooth_path.header.frame_id = globalmap_frame_id;
+    smooth_path_pub.publish(smooth_path);
+
+
+    
 }
 
 visualization_msgs::Marker PathPlanningPipline::convertPath2visualmsgs(nav_msgs::Path & path)
@@ -330,6 +307,21 @@ visualization_msgs::Marker PathPlanningPipline::convertPath2visualmsgs(nav_msgs:
     return path_marker;
 }
 
+
+vector<cv::Point> PathPlanningPipline::path2CvPoint(nav_msgs::Path & path)
+{
+    vector<cv::Point> cv_points;
+    for (auto & point : path.poses)
+    {
+        grid_map::Position position(point.pose.position.x, point.pose.position.y);
+        grid_map::Index index;
+        if (globalmap.getIndex(position, index))
+        {
+            cv_points.emplace_back(index.y(), index.x());
+        }
+    }
+    return cv_points;
+}
 
 PathPlanningPipline::~PathPlanningPipline()
 {
