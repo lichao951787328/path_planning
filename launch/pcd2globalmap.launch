@@ -5,7 +5,7 @@
   <param name="support_area_right" type="double" value="0.165"/>
   <param name="obstacle_inflation_radius" type="double" value="0.5"/>
   <param name="obstacle_length" type="double" value="2.0"/>
-  <param name="obstacle_rad" type="int" value="6"/>
+  <param name="obstacle_rad" type="int" value="10"/>
   <param name="safe_region_radius" type="double" value="0.55"/>
 
   <param name="d_safe_goal" type="double" value="0.6"/>
@@ -34,8 +34,10 @@
   <!-- Elevation mapping node -->
   <node pkg="path_planning" type="pcd2globalmap" name="pcd2globalmap" output="screen" />
 
+  <node name="globalmap_load" pkg="rosbag" type="play" output="screen" args="--clock --loop /home/lichao/catkin_pathplanning/src/path_planning/data/globalmap.bag" />
+
   <!-- Launch visualizations for the resulting elevation map -->
-  <include file="$(find path_planning)/launch/path_smooth.launch" />
+  <!-- <include file="$(find path_planning)/launch/path_smooth.launch" /> -->
 
   <!-- Launch RViz with the demo configuration -->
   <node name="rviz" pkg="rviz" type="rviz" args="-d $(find path_planning)/rviz/rviz.rviz" />

@@ -52,6 +52,8 @@ public:
     PathPlanningPipline(ros::NodeHandle & n);
     void GoalCallback(const geometry_msgs::PoseStamped::Ptr msg);
     void globalmapCallback(const grid_map_msgs::GridMap::ConstPtr globalmap_msg);
+    vector<cv::Point> path2CvPoint(grid_map::GridMap & map, nav_msgs::Path & path);
+    void map2ObstacleLayer(grid_map::GridMap & map, string heightLayer);
     visualization_msgs::Marker convertPath2visualmsgs(nav_msgs::Path & path);
     ~PathPlanningPipline();
 };
@@ -158,6 +160,64 @@ void PathPlanningPipline::globalmapCallback(const grid_map_msgs::GridMap::ConstP
 }
 
 
+void PathPlanningPipline::map2ObstacleLayer(grid_map::GridMap & map, string heightLayer)
+{
+    // 把高程图转成障碍图，注意是根据高度梯度，只有在高度梯度下降达到某个程度的点才会被膨胀，生成障碍区域。
+    const float minValue = map.get("elevation").minCoeffOfFinites();
+    const float maxValue = map.get("elevation").maxCoeffOfFinites();
+
+    cv::Mat heightImage;
+    grid_map::GridMapCvConverter::toImage<unsigned char, 1>(map, "elevation", CV_8UC1, minValue, maxValue, heightImage);
+
+    // 计算水平和垂直梯度
+    cv::Mat grad_x, grad_y;
+    cv::Sobel(heightImage, grad_x, CV_32F, 1, 0, 3);
+    cv::Sobel(heightImage, grad_y, CV_32F, 0, 1, 3);
+
+    // 计算梯度幅值
+    cv::Mat grad_magnitude;
+    cv::magnitude(grad_x, grad_y, grad_magnitude);
+
+    // 计算梯度方向（以角度表示）
+    cv::Mat grad_angle;
+    cv::phase(grad_x, grad_y, grad_angle, true);
+
+    // 创建掩膜，用于膨胀
+    cv::Mat dilate_mask = cv::Mat::zeros(heightImage.size(), CV_8U);
+
+    // 遍历图像，根据梯度方向来选择性膨胀
+    for (int i = 1; i < heightImage.rows - 1; ++i) 
+    {
+        for (int j = 1; j < heightImage.cols - 1; ++j) 
+        {
+            // 获取当前像素的梯度方向
+            float angle = grad_angle.at<float>(i, j);
+
+            // 如果梯度方向指向下降的方向，则进行膨胀
+            // 这里的判断依据需要根据实际场景调整，比如检查角度的范围
+            if (angle >= 45 && angle <= 135) 
+            {
+                dilate_mask.at<uchar>(i, j) = 255;  // 例如设置为255代表膨胀
+            }
+        }
+    }
+}
+
+vector<cv::Point> PathPlanningPipline::path2CvPoint(grid_map::GridMap & map, nav_msgs::Path & path)
+{
+    vector<cv::Point> cv_points;
+    for (auto & point : path.poses)
+    {
+        grid_map::Position position(point.pose.position.x, point.pose.position.y);
+        grid_map::Index index;
+        if (map.getIndex(position, index))
+        {
+            cv_points.emplace_back(index.x(), index.y());
+        }
+    }
+    return cv_points;
+}
+
 // 起点终点都是相对于点云地图的，要转到全局地形地图坐标系下
 void PathPlanningPipline::GoalCallback(const geometry_msgs::PoseStamped::Ptr msg)
 {
@@ -229,6 +289,10 @@ void PathPlanningPipline::GoalCallback(const geometry_msgs::PoseStamped::Ptr msg
     PathPlanning path_planning(globalmap, start, goal, param);
     path_planning.processing();
     nav_msgs::Path path = path_planning.getPath();
+
+    // 规划的path转成cv点，传入顺滑器中
+
+
     path.header.frame_id = globalmap_frame_id;
     path_pub.publish(path);
 }

@@ -19,61 +19,11 @@
 #include <pcl/filters/statistical_outlier_removal.h>
 #include <grid_map_cv/GridMapCvConverter.hpp>
 #include <grid_map_filters/MeanInRadiusFilter.hpp>
+#include <boost/foreach.hpp>  // 用于遍历
+#include <path_smoother/path_smoother.h>
+
 // 是否使用rviz来获取起点和终点
 #define SET_BY_RVIZ
-#define IN_PAINT
-Eigen::Vector3d start, goal;
-bool start_get = false, goal_get = false;
-
-
-void StartCallback(const geometry_msgs::PoseWithCovarianceStamped::Ptr msg)
-{
-    // 提取 x 和 y 坐标
-    double x = msg->pose.pose.position.x;
-    double y = msg->pose.pose.position.y;
-
-    // 提取四元数
-    tf2::Quaternion quat;
-    quat.setX(msg->pose.pose.orientation.x);
-    quat.setY(msg->pose.pose.orientation.y);
-    quat.setZ(msg->pose.pose.orientation.z);
-    quat.setW(msg->pose.pose.orientation.w);
-
-    // 将四元数转换为欧拉角
-    double roll, pitch, yaw;
-    tf2::Matrix3x3(quat).getRPY(roll, pitch, yaw);
-    start[0] = x;
-    start[1] = y;
-    start[2] = yaw;
-    // 输出 x, y, 和 yaw
-    ROS_INFO("start: x: %f, y: %f, yaw: %f", x, y, yaw * 57.3);
-    start_get = true;
-}
-
-void GoalCallback(const geometry_msgs::PoseStamped::Ptr msg)
-{
-    // 提取 x 和 y 坐标
-    double x = msg->pose.position.x;
-    double y = msg->pose.position.y;
-
-    // 提取四元数
-    tf2::Quaternion quat;
-    quat.setX(msg->pose.orientation.x);
-    quat.setY(msg->pose.orientation.y);
-    quat.setZ(msg->pose.orientation.z);
-    quat.setW(msg->pose.orientation.w);
-
-    // 将四元数转换为欧拉角
-    double roll, pitch, yaw;
-    tf2::Matrix3x3(quat).getRPY(roll, pitch, yaw);
-    goal[0] = x;
-    goal[1] = y;
-    goal[2] = yaw;
-    // 输出 x, y, 和 yaw
-    ROS_INFO("goal: x: %f, y: %f, yaw: %f", x, y, yaw * 57.3);
-    goal_get = true;
-}
-
 visualization_msgs::Marker convertPath2visualmsgs(nav_msgs::Path & path)
 {
     visualization_msgs::Marker path_marker;
@@ -107,6 +57,249 @@ visualization_msgs::Marker convertPath2visualmsgs(nav_msgs::Path & path)
     return path_marker;
 }
 
+
+
+
+class planningNode
+{
+private:
+    ros::NodeHandle nh;
+    ros::Subscriber map_sub;
+    ros::Subscriber start_sub, goal_sub;
+    ros::Publisher path_pub;
+    ros::Publisher smooth_path_pub;
+
+    grid_map::GridMap map;
+    Eigen::Vector3d start, goal;
+    bool get_map = false;
+    bool get_start = false;
+    bool get_goal = false;
+
+    planningParam param;
+public:
+    planningNode(ros::NodeHandle & n):nh(n)
+    {
+        map_sub = nh.subscribe("/global_map", 1, &planningNode::MapCallback, this);
+        start_sub = nh.subscribe("/initialpose", 1, &planningNode::StartCallback, this);
+        goal_sub = nh.subscribe("/move_base_simple/goal", 1, &planningNode::GoalCallback, this);
+        path_pub = nh.advertise<nav_msgs::Path>("/path", 1);
+        smooth_path_pub = nh.advertise<nav_msgs::Path>("/smooth_path", 1);
+        nh.getParam("support_area_up", param.support_area.Up);
+        nh.getParam("support_area_button", param.support_area.Button);
+        nh.getParam("support_area_left", param.support_area.Left);
+        nh.getParam("support_area_right", param.support_area.Right);
+        
+        nh.getParam("obstacle_inflation_radius", param.obstacle_inflation_radius);
+        nh.getParam("obstacle_length", param.obstacle_length);
+        nh.getParam("obstacle_rad", param.obstacle_rad);
+        nh.getParam("safe_region_radius", param.safe_region_radius);
+
+        // 终点障碍
+        nh.getParam("d_safe_goal", param.d_safe_goal);
+        nh.getParam("d_vort_goal", param.d_vort_goal);
+        nh.getParam("d_noinflu_offset_goal", param.d_noinflu_offset_goal);
+
+        // 一般障碍
+        nh.getParam("d_safe_gen", param.d_safe_gen);
+        nh.getParam("d_vort_gen", param.d_vort_gen);
+        nh.getParam("d_noinflu_offset_gen", param.d_noinflu_offset_gen);
+
+        nh.getParam("goal_obstacle_cof", param.goal_obstacle_cof);
+        nh.getParam("gen_obstacle_cof", param.gen_obstacle_cof);
+        nh.getParam("d_g_att", param.d_g_att);
+        nh.getParam("d_g_att_cof", param.d_g_att_cof);
+        nh.getParam("support_ratio", param.support_ratio);
+        nh.getParam("step", param.step);
+    }
+    void MapCallback(const grid_map_msgs::GridMap::ConstPtr & msg)
+    {
+        if (get_map == false)
+        {
+            LOG(INFO)<<"get map";
+            grid_map::GridMapRosConverter::fromMessage(*msg, map);
+            get_map = true;
+            param.resolution = map.getResolution();
+            param.computeRadius();
+            param.computeSupportNumTh();
+#ifndef SET_BY_RVIZ
+            // 在此设置起点和终点
+            PathPlanning path_planning(map, start, goal, param);
+            if (path_planning.processing())
+            {
+                nav_msgs::Path path = path_planning.getPath();
+                path.header.frame_id = "map";
+                path_pub.publish(path);
+                sleep(2);
+            }
+            get_map = false;
+#endif
+        }
+    }
+
+    void GoalCallback(const geometry_msgs::PoseStamped::Ptr msg)
+    {
+        // 提取 x 和 y 坐标
+        double x = msg->pose.position.x;
+        double y = msg->pose.position.y;
+
+        // 提取四元数
+        tf2::Quaternion quat;
+        quat.setX(msg->pose.orientation.x);
+        quat.setY(msg->pose.orientation.y);
+        quat.setZ(msg->pose.orientation.z);
+        quat.setW(msg->pose.orientation.w);
+
+        // 将四元数转换为欧拉角
+        double roll, pitch, yaw;
+        tf2::Matrix3x3(quat).getRPY(roll, pitch, yaw);
+        goal[0] = x;
+        goal[1] = y;
+        goal[2] = yaw;
+        // 输出 x, y, 和 yaw
+        ROS_INFO("goal: x: %f, y: %f, yaw: %f", x, y, yaw * 57.3);
+        get_goal = true;
+#ifdef SET_BY_RVIZ
+        if (get_map && get_start && get_goal)
+        {
+            PathPlanning path_planning(map, start, goal, param);
+            if (path_planning.processing())
+            {
+                nav_msgs::Path path = path_planning.getPath();
+                path.header.frame_id = "map";
+                path_pub.publish(path);
+
+                // 把生成的障碍图进行膨胀，对终点障碍区域和开口区域不作为障碍区域，此时的开口区域为可通行的区域
+
+                cv::Mat obstacle_layer = path_planning.getObstacleVoronoi();
+                std::vector<cv::Point> points = path2CvPoint(path);
+                cv::bitwise_not(obstacle_layer, obstacle_layer);
+                PathSmoother path_smoother(obstacle_layer, points);
+                path_smoother.smoothPath();
+                
+                // 这是在图像坐标系下的角度和坐标，要转成地图坐标系下
+                std::vector<Pose2d> smooth_path_3d = path_smoother.getSmoothedPath();
+                nav_msgs::Path smooth_path;
+                for (int i = 0; i < smooth_path_3d.size(); i++)
+                {
+                    Pose2d pose = smooth_path_3d[i];
+                    geometry_msgs::PoseStamped pose_stamped;
+
+                    grid_map::Index index(pose.y(), pose.x());
+                    grid_map::Position3 position3;
+                    if (map.getPosition3("elevation", index, position3))
+                    {
+                        pose_stamped.pose.position.x = position3.x();
+                        pose_stamped.pose.position.y = position3.y();
+                        pose_stamped.pose.position.z = position3.z();
+                    }
+
+                    Eigen::AngleAxisd rotation_vector(pose.theta(), Eigen::Vector3d::UnitZ());
+                    Eigen::Quaterniond quaternion(rotation_vector);
+                    pose_stamped.pose.orientation.x = quaternion.x();
+                    pose_stamped.pose.orientation.y = quaternion.y();
+                    pose_stamped.pose.orientation.z = quaternion.z();
+                    pose_stamped.pose.orientation.w = quaternion.w();
+                    
+                    smooth_path.poses.emplace_back(pose_stamped);
+                }
+                smooth_path.header.frame_id = "map";
+                smooth_path_pub.publish(smooth_path);
+            }
+            get_start = false;
+            get_goal = false;
+        }
+#endif
+    }
+
+    void StartCallback(const geometry_msgs::PoseWithCovarianceStamped::Ptr msg)
+    {
+        // 提取 x 和 y 坐标
+        double x = msg->pose.pose.position.x;
+        double y = msg->pose.pose.position.y;
+
+        // 提取四元数
+        tf2::Quaternion quat;
+        quat.setX(msg->pose.pose.orientation.x);
+        quat.setY(msg->pose.pose.orientation.y);
+        quat.setZ(msg->pose.pose.orientation.z);
+        quat.setW(msg->pose.pose.orientation.w);
+
+        // 将四元数转换为欧拉角
+        double roll, pitch, yaw;
+        tf2::Matrix3x3(quat).getRPY(roll, pitch, yaw);
+        start[0] = x;
+        start[1] = y;
+        start[2] = yaw;
+        // 输出 x, y, 和 yaw
+        ROS_INFO("start: x: %f, y: %f, yaw: %f", x, y, yaw * 57.3);
+        get_start = true;
+    }
+    
+    void map2ObstacleLayer(grid_map::GridMap & map, string heightLayer)
+    {
+        // 把高程图转成障碍图，注意是根据高度梯度，只有在高度梯度下降达到某个程度的点才会被膨胀，生成障碍区域。
+        const float minValue = map.get("elevation").minCoeffOfFinites();
+        const float maxValue = map.get("elevation").maxCoeffOfFinites();
+
+        cv::Mat heightImage;
+        grid_map::GridMapCvConverter::toImage<unsigned char, 1>(map, "elevation", CV_8UC1, minValue, maxValue, heightImage);
+
+        // 计算水平和垂直梯度
+        cv::Mat grad_x, grad_y;
+        cv::Sobel(heightImage, grad_x, CV_32F, 1, 0, 3);
+        cv::Sobel(heightImage, grad_y, CV_32F, 0, 1, 3);
+
+        // 计算梯度幅值
+        cv::Mat grad_magnitude;
+        cv::magnitude(grad_x, grad_y, grad_magnitude);
+
+        // 计算梯度方向（以角度表示）
+        cv::Mat grad_angle;
+        cv::phase(grad_x, grad_y, grad_angle, true);
+
+        // 创建掩膜，用于膨胀
+        cv::Mat dilate_mask = cv::Mat::zeros(heightImage.size(), CV_8U);
+
+        // 遍历图像，根据梯度方向来选择性膨胀
+        for (int i = 1; i < heightImage.rows - 1; ++i) 
+        {
+            for (int j = 1; j < heightImage.cols - 1; ++j) 
+            {
+                // 获取当前像素的梯度方向
+                float angle = grad_angle.at<float>(i, j);
+
+                // 如果梯度方向指向下降的方向，则进行膨胀
+                // 这里的判断依据需要根据实际场景调整，比如检查角度的范围
+                if (angle >= 45 && angle <= 135) 
+                {
+                    dilate_mask.at<uchar>(i, j) = 255;  // 例如设置为255代表膨胀
+                }
+            }
+        }
+    }
+    
+    vector<cv::Point> path2CvPoint(nav_msgs::Path & path)
+    {
+        vector<cv::Point> cv_points;
+        for (auto & point : path.poses)
+        {
+            grid_map::Position position(point.pose.position.x, point.pose.position.y);
+            grid_map::Index index;
+            if (map.getIndex(position, index))
+            {
+                cv_points.emplace_back(index.y(), index.x());
+            }
+        }
+        return cv_points;
+    }
+    ~planningNode()
+    {
+
+    }
+};
+
+
+
 int main(int argc, char** argv)
 {
     google::InitGoogleLogging(argv[0]); 
@@ -116,275 +309,11 @@ int main(int argc, char** argv)
     FLAGS_colorlogtostderr = true;
     FLAGS_alsologtostderr = true;
     ros::init(argc, argv, "planning");
-    ros::NodeHandle nh;
+    ros::NodeHandle n;
 
-    // 加载参数
-    double support_area_up, support_area_button, support_area_left, support_area_right;
-    // double resolution;
-    int obstacle_rad;
-    double obstacle_inflation_radius, obstacle_length, safe_region_radius;
+    planningNode planning_node(n);
 
-    double d_safe_goal, d_vort_goal, d_noinflu_offset_goal;
-
-    // 普通障碍距离参数
-    double d_safe_gen, d_vort_gen, d_noinflu_offset_gen;
-
-    double goal_obstacle_cof, gen_obstacle_cof, d_g_att, d_g_att_cof;
-    double support_ratio, step;
-
-    nh.getParam("support_area_up", support_area_up);
-    nh.getParam("support_area_button", support_area_button);
-    nh.getParam("support_area_left", support_area_left);
-    nh.getParam("support_area_right", support_area_right);
-    
-    nh.getParam("obstacle_inflation_radius", obstacle_inflation_radius);
-    nh.getParam("obstacle_length", obstacle_length);
-    nh.getParam("obstacle_rad", obstacle_rad);
-    nh.getParam("safe_region_radius", safe_region_radius);
-
-    // 终点障碍
-    nh.getParam("d_safe_goal", d_safe_goal);
-    nh.getParam("d_vort_goal", d_vort_goal);
-    nh.getParam("d_noinflu_offset_goal", d_noinflu_offset_goal);
-
-    // 一般障碍
-    nh.getParam("d_safe_gen", d_safe_gen);
-    nh.getParam("d_vort_gen", d_vort_gen);
-    nh.getParam("d_noinflu_offset_gen", d_noinflu_offset_gen);
-
-
-    nh.getParam("goal_obstacle_cof", goal_obstacle_cof);
-    nh.getParam("gen_obstacle_cof", gen_obstacle_cof);
-    nh.getParam("d_g_att", d_g_att);
-    nh.getParam("d_g_att_cof", d_g_att_cof);
-    nh.getParam("support_ratio", support_ratio);
-    nh.getParam("step", step);
-    LOG(INFO)<<support_area_up<<" "<<support_area_button<<" "<<support_area_left<<" "<<support_area_right<<" "<<obstacle_inflation_radius<<" "<<obstacle_length<<" "<<obstacle_rad<<" "<<safe_region_radius<<" "<<d_safe_goal<<" "<<d_vort_goal<<" "<<d_noinflu_offset_goal<<d_safe_gen<<" "<<d_vort_gen<<" "<<d_noinflu_offset_gen<<" "<<goal_obstacle_cof<<" "<<gen_obstacle_cof<<" "<<d_g_att<<" "<<d_g_att_cof<<" "<<support_ratio<<" "<<step;
-    planningParam param;
-   
-    ros::Subscriber start_sub = nh.subscribe("/initialpose", 1, StartCallback);
-    ros::Subscriber goal_sub = nh.subscribe("/move_base_simple/goal", 1, GoalCallback);
-    ros::Publisher map_pub = nh.advertise<grid_map_msgs::GridMap>("global_map", 1);
-    ros::Publisher path_pub = nh.advertise<nav_msgs::Path>("path", 1);
-    ros::Publisher path_marker_pub = nh.advertise<visualization_msgs::Marker>("path_marker", 1);
-
-    // string globalmap_bag_path, globalmap_topic;
-    // nh.param("globalmap_bag_path", globalmap_bag_path, string("/home/lichao/catkin_pathplanning/src/path_planning/bag/globalmap.bag"));
-    // nh.param("globalmap_topic", globalmap_topic, string("globalmap"));
-
-    // 从采集的点云中转换成高程图
-    
-    pcl::PointCloud<pcl::PointXYZ> pointcloud;
-    // 修过的点云
-    pcl::io::loadPCDFile("/home/lichao/catkin_pathplanning/src/path_planning/data/globalmap_filte_seg.pcd", pointcloud);
-    // 原始点云
-    // pcl::io::loadPCDFile("/home/lichao/catkin_pathplanning/src/path_planning/data/globalmap.pcd", pointcloud);
-    // 计算点云在x，y方向的中点及在x y方向上点离中点的最远距离
-    Eigen::Vector4f centroid;
-    pcl::compute3DCentroid(pointcloud, centroid);
-    double x_center = centroid[0];
-    double y_center = centroid[1];
-
-    double max_distance_x = 0.0;
-    double max_distance_y = 0.0;
-    for (const auto& point : pointcloud.points)
-    {
-        double distance_x = std::abs(point.x - x_center);
-        double distance_y = std::abs(point.y - y_center);
-        if (distance_x > max_distance_x)
-        {
-            max_distance_x = distance_x;
-        }
-        if (distance_y > max_distance_y)
-        {
-            max_distance_y = distance_y;
-        }
-    }
-
-    ROS_INFO("Point cloud centroid: x: %f, y: %f", x_center, y_center);
-    ROS_INFO("Max distance from centroid in x direction: %f", max_distance_x);
-    ROS_INFO("Max distance from centroid in y direction: %f", max_distance_y);
-
-    // 创建一个GridMap对象
-    grid_map::GridMap global_map({"elevation"});
-    // grid_map::GridMap global_map;
-    
-
-    // grid_map::MeanInRadiusFilter ;
-
-    // 设置GridMap的分辨率和尺寸
-    double resolution = 0.02;  // 设置分辨率
-    global_map.setGeometry(grid_map::Length(2 * max_distance_x, 2 * max_distance_y), resolution, grid_map::Position(x_center, y_center));
-    // global_map.add("elevation", 0.0);
-    // global_map;
-    global_map.setFrameId("map");
-    // 填充GridMap的高程数据
-    for (const auto& point : pointcloud.points)
-    {
-        grid_map::Position position(point.x, point.y);
-        if (global_map.isInside(position))
-        {
-            global_map.atPosition("elevation", position) = point.z;
-        }
-    }
-
-#ifdef IN_PAINT
-
-    global_map.add("inpaint_mask", 0.0);
-    string height_layer = "elevation";
-    global_map.setBasicLayers(std::vector<std::string>());
-    for (grid_map::GridMapIterator iterator(global_map); !iterator.isPastEnd(); ++iterator) {
-        if (!global_map.isValid(*iterator, height_layer)) {
-        global_map.at("inpaint_mask", *iterator) = 1.0;
-        }
-    }
-    cv::Mat originalImage;
-    cv::Mat mask;
-    cv::Mat filledImage;
-    // const float minValue = global_map.get(height_layer).minCoeffOfFinites();
-    const float minValue = 0.0;
-    const float maxValue = global_map.get(height_layer).maxCoeffOfFinites();
-
-    grid_map::GridMapCvConverter::toImage<unsigned char, 3>(global_map, height_layer, CV_8UC3, minValue, maxValue,originalImage);
-    grid_map::GridMapCvConverter::toImage<unsigned char, 1>(global_map, "inpaint_mask", CV_8UC1, mask);
-    // cv::imshow("originalImage", originalImage);
-    // cv::waitKey(0);
-    // LOG(INFO)<<"CCC";
-    // 2. 定义滤波参数
-    cv::Size kernelSize(3, 3);  // 5x5 高斯核
-    double sigmaX = 1.2;        // X 方向的标准差
-    double sigmaY = 1.2;        // Y 方向的标准差
-   
-    // 3. 应用高斯滤波
-    cv::Mat smoothedImage;
-    cv::GaussianBlur(originalImage, smoothedImage, kernelSize, sigmaX, sigmaY);
-    global_map.erase(height_layer);
-    grid_map::GridMapCvConverter::addLayerFromImage<unsigned char, 3>(smoothedImage, height_layer, global_map, minValue, maxValue);
-
-    if (global_map.exists(height_layer))
-    {
-        LOG(INFO)<<"add layer success";
-    }
-    
-#endif
-
-    // const double radiusInPixels = 0.1 / global_map.getResolution();
-    // cv::inpaint(originalImage, mask, filledImage, radiusInPixels, cv::INPAINT_NS);
-    // global_map.erase(height_layer);
-    // grid_map::GridMapCvConverter::addLayerFromImage<unsigned char, 3>(filledImage, height_layer, global_map, minValue, maxValue);
-    // global_map.erase("inpaint_mask");
-
-    // 发布GridMap消息
-    grid_map_msgs::GridMap globalmap_msg;
-    grid_map::GridMapRosConverter::toMessage(global_map, globalmap_msg);
-
-    param.support_area.Up = support_area_up;
-    param.support_area.Button = support_area_button;
-    param.support_area.Left = support_area_left;
-    param.support_area.Right = support_area_right;
-    param.resolution = global_map.getResolution();
-    param.obstacle_inflation_radius = obstacle_inflation_radius;
-    param.obstacle_length = obstacle_length;
-    param.safe_region_radius = safe_region_radius;
-    param.obstacle_rad = obstacle_rad;
-
-    param.d_safe_goal = d_safe_goal;
-    param.d_vort_goal = d_vort_goal;
-    param.d_noinflu_offset_goal = d_noinflu_offset_goal;
-
-    param.d_safe_gen = d_safe_gen;
-    param.d_vort_gen = d_vort_gen;
-    param.d_noinflu_offset_gen = d_noinflu_offset_gen;
-    
-    param.computeRadius();
-    param.goal_obstacle_cof = goal_obstacle_cof;
-    param.gen_obstacle_cof = gen_obstacle_cof;
-    param.d_g_att = d_g_att;
-    param.d_g_att_cof = d_g_att_cof;
-    param.support_ratio = support_ratio;
-    param.step = step;
-    param.computeSupportNumTh();
-
-    // // 自己先给定终点，来对比普通Astar和人工势场Astar的区别
-    // start[0] = 3.26811;
-    // start[1] = -2.39386;
-    // start[2] = 0.289504;
-#ifndef SET_BY_RVIZ
-    start = Eigen::Vector3d(5.23212, 2.57562, 1.81097);
-    goal = Eigen::Vector3d(-0.992767, 3.33181, -3.06899);
-#endif
-    // goal[0] = 7.21435;
-    // goal[1] = 2.10046;
-    // goal[2] = 0;
-    sleep(2);
-
-    LOG(INFO)<<"PUB";
-    // 下面是通过rviz给定起点和终点
-    ros::Rate loop_rate(0.4);
-    while (ros::ok())
-    {
-        map_pub.publish(globalmap_msg);
-        loop_rate.sleep();
-#ifndef SET_BY_RVIZ
-        PathPlanning path_planning(global_map, start, goal, param);
-        path_planning.processing();
-        nav_msgs::Path path = path_planning.getPath();
-        path.header.frame_id = "map";
-        path_pub.publish(path);
-        // visualization_msgs::Marker path_marker = convertPath2visualmsgs(path);
-        // path_marker_pub.publish(path_marker);
-        // loop_rate.sleep();
-#else
-        ros::spinOnce();
-        // // start: x: 2.338864, y: 0.339921, yaw: 11.690219
-        // start[0] = 2.338864;
-        // start[1] = 0.339921;
-        // start[2] = 11.690219/57.3;
-
-        // // goal: x: 3.358081, y: 3.320854, yaw: 104.043889
-        // goal[0] = 3.358081;
-        // goal[1] = 3.320854;
-        // goal[2] = 104.043889/57.3;
-
-        // start: x: 2.305987, y: 0.471433, yaw: 13.173531
-        start[0] = 2.305987;
-        start[1] = 0.471433;
-        start[2] = 13.173531/57.3;
-        // goal: x: 4.530727, y: 3.375651, yaw: 70.351363
-        goal[0] = 4.530727;
-        goal[1] = 3.375651;
-        goal[2] = 70.351363/57.3;
-
-        PathPlanning path_planning(global_map, start, goal, param);
-        path_planning.processing();
-        LOG(INFO)<<"OUT";
-
-        // if (!(start_get && goal_get))
-        // {
-        //     LOG(INFO)<<"wait start and goal";
-        //     loop_rate.sleep();
-        //     continue;
-        // }
-        // else
-        // {
-        //     LOG(INFO)<<"initial path planning";
-        //     LOG(INFO)<<start.transpose();
-        //     LOG(INFO)<<goal.transpose();
-        //     PathPlanning path_planning(global_map, start, goal, param);
-        //     path_planning.processing();
-        //     nav_msgs::Path path = path_planning.getPath();
-        //     // path_planning.constructPlaneAwareMap();
-        //     // path_planning.constructObstacleLayer(6);
-        //     // path_planning.computeRep();
-        //     path.header.frame_id = "map";
-        //     path_pub.publish(path);
-        //     start_get = false;
-        //     goal_get = false;
-        // }
-#endif
-    }
+    ros::spin();
     LOG(INFO)<<"OUT";
-    
-
     return 0;
 }

@@ -54,6 +54,12 @@ PathPlanning::PathPlanning(grid_map::GridMap & map_, Eigen::Vector3d & start, Ei
 #endif
     // Full_feasible = cv::Mat::zeros(map.getSize().x(), map.getSize().y(), CV_8UC1);
     check_Mat = cv::Mat::zeros(map.getSize().x(), map.getSize().y(), CV_8UC1);
+
+    obstacle_layer_voronoi = cv::Mat::zeros(map.getSize().x(), map.getSize().y(), CV_8UC1);
+
+    obstacle_layer_voronoi_goal = cv::Mat::zeros(map.getSize().x(), map.getSize().y(), CV_8UC1);
+
+    hole_rect = cv::Mat::zeros(map.getSize().x(), map.getSize().y(), CV_8UC1);
 #ifdef DEBUG
     // cv::imshow("Full_feasible", Full_feasible);
     // cv::waitKey(0);
@@ -297,7 +303,7 @@ void PathPlanning::constructObstacleLayer(int chect_scope)
                 }
             }
             // 最大迈不高度不超过0.15
-            if (abs(max_height - min_height) < 0.14)
+            if (abs(max_height - min_height) < 0.13)
             {
                 // LOG(INFO)<<max_height<<" "<<min_height;
                 obstacle_layer.at<uchar>(i, j) = 0;
@@ -450,6 +456,12 @@ void PathPlanning::computeObstacles()
             std::vector<std::vector<cv::Point>> Contours = {hull};
             cv::drawContours(obstacle, Contours, 0, cv::Scalar(255), cv::FILLED);
             obstacles.emplace_back(obstacle);
+
+            cv::Mat kernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(planning_param.d_safe_rad_gen  * 2 + 1, planning_param.d_safe_rad_gen * 2 + 1));
+            cv::Mat dilated_region;
+            cv::dilate(obstacle, dilated_region, kernel);
+            obstacle_layer_voronoi.setTo(255, dilated_region);
+
 #ifdef DEBUG 
             LOG(INFO)<<"show obstacle";
             cv::imshow("obstacle", obstacle);
@@ -478,6 +490,14 @@ void PathPlanning::computeObstacles()
             cv::Mat hull_region = cv::Mat::zeros(obstacle_layer.size(), CV_8UC1);
             // 整个凸区域
             cv::drawContours(hull_region, hullContours, 0, cv::Scalar(255), cv::FILLED);
+            // 求voronoi，轨迹优化时用到
+            obstacle_layer_voronoi_goal = hull_region;
+
+            cv::Mat kernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(planning_param.d_safe_rad_goal * 2 + 1, planning_param.d_safe_rad_goal * 2 + 1));
+            cv::Mat dilated_region;
+            cv::dilate(hull_region, dilated_region, kernel);
+            obstacle_layer_voronoi.setTo(255, dilated_region);
+
             // 将原始轮廓区域去除
             cv::drawContours(hull_region, Contours, 0, cv::Scalar(0), cv::FILLED);
 #ifdef DEBUG 
@@ -558,12 +578,59 @@ void PathPlanning::computeObstacles()
             // 绘制椭圆
             cv::ellipse(check_image, center, axes, angle, 0, 360, cv::Scalar(255, 0, 0), -1);
 
+            int extend = 2 * planning_param.d_safe_rad_goal;
+
+            // 计算线段方向向量 (dx, dy)
+            cv::Point2f dir = pt2 - pt1;
+
+            // 计算线段的长度
+            float length_rect = cv::norm(dir);
+
+            // 归一化方向向量
+            cv::Point2f unitDir = dir / length_rect;
+
+            // 计算矩形的长边方向向量，并调整长度
+            cv::Point2f longDir = unitDir * ((length_rect + extend) / 2.0);
+            cv::Point longDir_int(longDir.x, longDir.y);
+
+            // 计算矩形的短边方向（垂直于线段方向）
+            cv::Point2f perpDir(unitDir.y, -unitDir.x); // 顺时针旋转 90°
+            cv::Point2f shortDir = perpDir * (extend / 2.0);
+            cv::Point shortDir_int(shortDir.x, shortDir.y);
+
+            // 计算矩形四个顶点
+            cv::Point rectPts[4] = {
+                center + longDir_int, // 左上
+                center + longDir_int + shortDir_int, // 右上
+                center - longDir_int + shortDir_int, // 右下
+                center - longDir_int  // 左下
+            };
+            
+            cv::fillConvexPoly(hole_rect, rectPts, 4, 255);
+
+            cv::Mat kernel_noise = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(5, 5));
+            cv::dilate(hole_rect, hole_rect, kernel_noise);
+            obstacle_layer_voronoi.setTo(255, dilated_region);
+
+            // 把这一区域涂成黑色，表示不是障碍
+            // obstacle_layer_voronoi.setTo(0, hole_rect);
 #ifdef DEBUG
             cv::imshow("check_image_LAST", check_image);
             cv::waitKey(0);
 #endif
         }
     }
+    // 把开口这一区域不设置为障碍区域
+    obstacle_layer_voronoi.setTo(0, hole_rect);
+    obstacle_layer_voronoi.setTo(0, obstacle_layer_voronoi_goal);
+    LOG(INFO)<<"obstacle_layer_voronoi";
+    cv::imshow("obstacle_layer_voronoi", obstacle_layer_voronoi);
+    cv::waitKey(0);
+    cv::imshow("obstacle_layer_voronoi_goal", obstacle_layer_voronoi_goal);
+    cv::waitKey(0);
+    cv::imshow("hole_rect", hole_rect);
+    cv::waitKey(0);
+
     // 为障碍添加层
     if (cv::countNonZero(goal_obstacle) > 0)
     {

@@ -172,13 +172,17 @@ add_executable(path_smoother src/path_smoother_node.cpp src/path_smooth.cpp src/
 
 # add_executable(pcd2globalmap src/pcd2globalmap.cpp)
 
-add_executable(pcd2globalmap src/planning_node_realworld.cpp src/planning_realworld.cpp)
+add_executable(pcd2globalmap src/planning_node_realworld.cpp src/planning_realworld.cpp src/path_smoother/path_smoother.cpp src/path_smoother/dynamic_voronoi.cpp src/basic_define/bucket_queue.cpp src/basic_define/vec2d.cpp)
 
 add_executable(global_pathplanning src/planning_node_realworld_0212.cpp src/planning_realworld.cpp)
 
 add_executable(preprocess src/cloud_preprocess.cpp)
 
 add_executable(flat_ground src/flatElevationMap.cpp)
+
+add_executable(PCD2dirtyPCD src/PCD2dirtyPCD.cpp)
+
+add_executable(clearPCD2globalmap src/clearPCD2globalmap.cpp)
 ## Rename C++ executable without prefix
 ## The above recommended prefix causes long target names, the following renames the
 ## target back to the shorter version for ease of user use
@@ -210,18 +214,6 @@ target_link_libraries(test_gridmap
   ${PCL_FILTERS_LIBRARIES}
 )
 
-# target_link_libraries(planning
-#   ${catkin_LIBRARIES}
-#   ${OpenCV_LIBRARIES}
-#   glog::glog
-#   ${peac_LIBRARIES}
-#   ${PCL_COMMON_LIBRARIES}
-#   ${PCL_IO_LIBRARIES}
-#   ${PCL_FILTERS_LIBRARIES}
-#   ${PYTHON_LIBRARIES}
-#   OpenMP::OpenMP_CXX
-# )
-
 target_link_libraries(path_smoother
 ${catkin_LIBRARIES}
 ${OpenCV_LIBRARIES}
@@ -252,6 +244,21 @@ ${PCL_COMMON_LIBRARIES}
 target_link_libraries(flat_ground
 ${catkin_LIBRARIES}
   glog::glog
+)
+
+target_link_libraries(PCD2dirtyPCD
+${PCL_COMMON_LIBRARIES}
+${PCL_IO_LIBRARIES}
+${PCL_FILTERS_LIBRARIES}
+${PCL_SEGMENTATION_LIBRARIES}
+glog::glog
+)
+
+target_link_libraries(clearPCD2globalmap
+${catkin_LIBRARIES}
+${PCL_COMMON_LIBRARIES}
+${PCL_IO_LIBRARIES}
+glog::glog
 )
 
 #############

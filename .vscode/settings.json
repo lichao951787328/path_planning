@@ -76,7 +76,9 @@
         "regex": "cpp",
         "core": "cpp",
         "specialfunctions": "cpp",
-        "any": "cpp"
+        "any": "cpp",
+        "csignal": "cpp",
+        "shared_mutex": "cpp"
     },
     "python.autoComplete.extraPaths": [
         "/opt/ros/noetic/lib/python3/dist-packages"

@@ -212,6 +212,13 @@ private:
     cv::Mat obstacle_layer;
     cv::Mat distanceMap;
     
+    // 可能与机器人身体发生碰撞的障碍层
+    cv::Mat obstacle_layer_voronoi;
+    // 如果机器人位于终点区域，则障碍层为空。因为没有扶手的楼梯是没有障碍层，在楼梯上行走也不受障碍层的影响
+    cv::Mat obstacle_layer_voronoi_goal;
+    // 开口处的长方形区域
+    cv::Mat hole_rect;
+
     // 只有这些区域的不是全向通行或者全向非通行
     cv::Mat check_Mat; // 非全向通行的区域 这里还没有将障碍附近的可通行区域删除，注意是障碍附近
 
@@ -284,8 +291,10 @@ public:
     std::pair<vector<cv::Point>, vector<cv::Point> > raySegLeftRight(cv::Point2f rayOrigin, vector<cv::Point> & contour);
     cv::Point getNearestPoint(cv::Point2f rayOrigin, vector<cv::Point> & contour);
     std::pair<cv::Mat, cv::Mat> getSegMoreAndLess(cv::Point2f rayOrigin,  vector<cv::Point> & contour, cv::Point segPoint);
-
-    
+    cv::Mat getObstacleVoronoi()
+    {
+        return obstacle_layer_voronoi;
+    }
 
 
     // 规划

@@ -29,16 +29,16 @@ int main(int argc, char** argv)
     map_pub.publish(message);
 
     // 将这个保存成一个bag
-    // if (grid_map::GridMapRosConverter::saveToBag(map, "/home/bhr/catkin_localization/src/hdl_localization/data/global_elevationmap/globalmap.bag", "global_map"))
-    // {
-    //     LOG(INFO)<<"save global map success.";
-    //     return true;
-    // }
-    // else
-    // {
-    //     LOG(ERROR)<<"save global map error.";
-    //     return false;
-    // }
+    if (grid_map::GridMapRosConverter::saveToBag(map, "/home/lichao/catkin_location/src/hdl_localization/data/globalmap.bag", "global_map"))
+    {
+        LOG(INFO)<<"save global map success.";
+        return true;
+    }
+    else
+    {
+        LOG(ERROR)<<"save global map error.";
+        return false;
+    }
     ros::spin();
     return 0;
 }
