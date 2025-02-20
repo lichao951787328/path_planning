@@ -102,7 +102,7 @@ pcl::PointCloud<pcl::PointXYZ> gridMap2Pointcloud(grid_map::GridMap & map)
 void PathPlanning::constructPlaneAwareMap()
 {
     pcl::PointCloud<pcl::PointXYZ> pc = gridMap2Pointcloud(map);
-    pcl::io::savePCDFile(package_path + "/data/pc.pcd", pc);
+    // pcl::io::savePCDFile(package_path + "/data/pc.pcd", pc);
 
     // 上面的检测方法里，平面信息和平面像素并不对应。后面针对像素对平面信息重新进行了检测
     pd.detect(pc);
