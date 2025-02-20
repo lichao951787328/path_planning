@@ -74,7 +74,17 @@ void PathSmoother::smoothPath() {
       smoothed_path_[i].set_x(xi.x());
       smoothed_path_[i].set_y(xi.y());
       Vec2d Dxi = xi - xim1;
-      smoothed_path_[i - 1].set_theta(std::atan2(Dxi.y(), Dxi.x()));
+
+      double epsilon = 1e-3;
+      double angle;
+
+      if (std::abs(Dxi.x()) < epsilon) { 
+          // 近似垂直
+          angle = (Dxi.y() >= 0) ? M_PI_2 : -M_PI_2;
+      } else {
+          angle = std::atan2(Dxi.y(), Dxi.x());
+      }
+      smoothed_path_[i - 1].set_theta(angle);
     }
     iterations++;
   }

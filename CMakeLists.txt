@@ -174,7 +174,7 @@ add_executable(path_smoother src/path_smoother_node.cpp src/path_smooth.cpp src/
 
 add_executable(pcd2globalmap src/planning_node_realworld.cpp src/planning_realworld.cpp src/path_smoother/path_smoother.cpp src/path_smoother/dynamic_voronoi.cpp src/basic_define/bucket_queue.cpp src/basic_define/vec2d.cpp)
 
-add_executable(global_pathplanning src/planning_node_realworld_0212.cpp src/planning_realworld.cpp)
+add_executable(global_pathplanning src/planning_node_realworld_0212.cpp src/planning_realworld.cpp src/path_smoother/path_smoother.cpp src/path_smoother/dynamic_voronoi.cpp src/basic_define/bucket_queue.cpp src/basic_define/vec2d.cpp)
 
 add_executable(preprocess src/cloud_preprocess.cpp)
 

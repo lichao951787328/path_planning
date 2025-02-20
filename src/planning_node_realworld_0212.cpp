@@ -25,6 +25,8 @@
 #include <glog/logging.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.h> 
 #include <path_smoother/path_smoother.h>
+#include <visualization_msgs/MarkerArray.h>
+#include <tf/tf.h>
 // 实际使用时，使用定位+订阅全局地图+订阅终点
 // 起点使用tf树
 class PathPlanningPipline
@@ -36,6 +38,7 @@ private:
     ros::Publisher path_pub;
     ros::Publisher path_marker_pub;
     ros::Publisher smooth_path_pub;
+    // ros::Publisher arror_path_pub;
     grid_map::GridMap globalmap;
     bool get_globalmap = false;
 
@@ -56,7 +59,7 @@ public:
     vector<cv::Point> path2CvPoint(grid_map::GridMap & map, nav_msgs::Path & path);
     void map2ObstacleLayer(grid_map::GridMap & map, string heightLayer);
     vector<cv::Point> path2CvPoint(nav_msgs::Path & path);
-    visualization_msgs::Marker convertPath2visualmsgs(nav_msgs::Path & path);
+    visualization_msgs::MarkerArray convertPath2visualmsgs(nav_msgs::Path smooth_path);
     ~PathPlanningPipline();
 };
 
@@ -140,9 +143,8 @@ PathPlanningPipline::PathPlanningPipline(ros::NodeHandle & n):nh(n)
     globalmap_sub = nh.subscribe(globalmap_topic, 1, &PathPlanningPipline::globalmapCallback, this);
     smooth_path_pub =  nh.advertise<nav_msgs::Path>("smooth_path", 1);
     path_pub = nh.advertise<nav_msgs::Path>("path", 1);
-    path_marker_pub = nh.advertise<visualization_msgs::Marker>("path_marker", 1);
-
-    visualization_msgs::Marker convertPath2visualmsgs(nav_msgs::Path & path);
+    path_marker_pub = nh.advertise<visualization_msgs::MarkerArray>("path_marker", 1);
+    // arror_path_pub = nh.advertise
 
     tf_buffer_ = std::make_unique<tf2_ros::Buffer>();
     transform_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
@@ -243,68 +245,84 @@ void PathPlanningPipline::GoalCallback(const geometry_msgs::PoseStamped::Ptr msg
     
     // 这是在图像坐标系下的角度和坐标，要转成地图坐标系下
     std::vector<Pose2d> smooth_path_3d = path_smoother.getSmoothedPath();
-    nav_msgs::Path smooth_path;
-    for (int i = 0; i < smooth_path_3d.size(); i++)
+    
+    std::vector<Eigen::Vector3d> smooth_path_real;
+    for (auto & pose : smooth_path_3d)
     {
-        Pose2d pose = smooth_path_3d[i];
-        geometry_msgs::PoseStamped pose_stamped;
-
         grid_map::Index index(pose.y(), pose.x());
-        grid_map::Position3 position3;
-        if (globalmap.getPosition3("elevation", index, position3))
+        grid_map::Position3 p3;
+        if (globalmap.getPosition3("elevation", index, p3))
         {
-            pose_stamped.pose.position.x = position3.x();
-            pose_stamped.pose.position.y = position3.y();
-            pose_stamped.pose.position.z = position3.z();
+            smooth_path_real.emplace_back(p3);
         }
+    }
+    vector<double> smooth_path_yaw;
+    
+    smooth_path_yaw.emplace_back(atan2(smooth_path_real[1].y() - smooth_path_real[0].y(), smooth_path_real[1].x() - smooth_path_real[0].x()));
+    for (int i = 1; i < smooth_path_real.size() - 1; i++)
+    {
+        smooth_path_yaw.emplace_back(atan2(smooth_path_real[i + 1].y() - smooth_path_real[i].y(), smooth_path_real[i + 1].x() - smooth_path_real[i].x()));
+    }
+    smooth_path_yaw.emplace_back(atan2(smooth_path_real[smooth_path_real.size() - 1].y() - smooth_path_real[smooth_path_real.size() - 2].y(), smooth_path_real[smooth_path_real.size() - 1].x() - smooth_path_real[smooth_path_real.size()- 2].x()));
 
-        Eigen::AngleAxisd rotation_vector(pose.theta(), Eigen::Vector3d::UnitZ());
-        Eigen::Quaterniond quaternion(rotation_vector);
-        pose_stamped.pose.orientation.x = quaternion.x();
-        pose_stamped.pose.orientation.y = quaternion.y();
-        pose_stamped.pose.orientation.z = quaternion.z();
-        pose_stamped.pose.orientation.w = quaternion.w();
-        
+    // for (auto & yaw : smooth_path_yaw)
+    // {
+    //     cout<<yaw<<" ";
+    // }
+    // cout<<endl;
+
+    nav_msgs::Path smooth_path;
+    for (int i = 0; i < smooth_path_real.size(); i++)
+    {
+        geometry_msgs::PoseStamped pose_stamped;
+        pose_stamped.pose.position.x = smooth_path_real[i].x();
+        pose_stamped.pose.position.y = smooth_path_real[i].y();
+        pose_stamped.pose.position.z = smooth_path_real[i].z();
+        pose_stamped.pose.orientation = tf::createQuaternionMsgFromYaw(smooth_path_yaw.at(i));
         smooth_path.poses.emplace_back(pose_stamped);
     }
     smooth_path.header.frame_id = globalmap_frame_id;
     smooth_path_pub.publish(smooth_path);
 
-
-    
+    visualization_msgs::MarkerArray marker_array = convertPath2visualmsgs(smooth_path);
+    path_marker_pub.publish(marker_array);
 }
 
-visualization_msgs::Marker PathPlanningPipline::convertPath2visualmsgs(nav_msgs::Path & path)
+visualization_msgs::MarkerArray PathPlanningPipline::convertPath2visualmsgs(nav_msgs::Path smooth_path)
 {
-    visualization_msgs::Marker path_marker;
-    path_marker.header.frame_id = "map";
-    path_marker.header.stamp = ros::Time::now();
-    path_marker.ns = "path";
-    path_marker.id = 0;
-    path_marker.type = visualization_msgs::Marker::LINE_STRIP;
-    path_marker.action = visualization_msgs::Marker::ADD;
-    path_marker.scale.x = 0.4;  // 设置线条宽度
-    path_marker.color.a = 1.0;  // 设置透明度
-    path_marker.color.r = 0.0;  // 设置红色
-    path_marker.color.g = 1.0;  // 设置绿色
-    path_marker.color.b = 0.0;  // 设置蓝色
-    for (int i = 0; i < path.poses.size() - 1; i++)
-    {
-        // 添加路径点
-        geometry_msgs::Point p1;
-        p1.x = path.poses.at(i).pose.position.x;
-        p1.y = path.poses.at(i).pose.position.y;
-        p1.z = path.poses.at(i).pose.position.z;
-        path_marker.points.push_back(p1);
+    visualization_msgs::MarkerArray marker_array;
 
-        geometry_msgs::Point p2;
-        p2.x = path.poses.at(i+1).pose.position.x;
-        p2.y = path.poses.at(i+1).pose.position.y;
-        p2.z = path.poses.at(i+1).pose.position.z;
-        path_marker.points.push_back(p2);
+    for (size_t i = 0; i < smooth_path.poses.size(); ++i) 
+    {
+        const auto& pose = smooth_path.poses.at(i);
+        
+        // 创建一个 Marker
+        visualization_msgs::Marker marker;
+        marker.header.frame_id = globalmap_frame_id;  // 选择适合的坐标系
+        // marker.header.stamp = ros::Time::now();
+        marker.ns = "smooth_path";
+        marker.id = i;  // 每个Marker的唯一ID
+        marker.type = visualization_msgs::Marker::ARROW;
+        
+        marker.action = visualization_msgs::Marker::ADD;
+        
+        marker.pose = pose.pose;
+
+        // 设置箭头的尺寸
+        marker.scale.x = 0.4;  // 箭头的厚度
+        marker.scale.y = 0.2;  // 箭头的宽度
+        marker.scale.z = 0.0;  // 没有垂直方向的尺寸
+        
+        // 设置颜色
+        marker.color.a = 1.0;  // 不透明
+        marker.color.r = 0.0;  // 红色
+        marker.color.g = 1.0;  // 绿色
+        marker.color.b = 0.0;  // 绿色
+
+        // 将 Marker 添加到 MarkerArray 中
+        marker_array.markers.push_back(marker);
     }
-    
-    return path_marker;
+    return marker_array;
 }
 
 

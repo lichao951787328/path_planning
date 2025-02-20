@@ -34,10 +34,10 @@
   <param name="lidar_frame_id" type="string" value="velodyne"/>
 
   <!-- Elevation mapping node -->
-  <node pkg="path_planning" type="global_pathplanning" name="pcd2globalmap" output="screen" />
+  <node pkg="path_planning" type="global_pathplanning" name="globalpathplanning" output="screen" />
 
   <!-- Launch visualizations for the resulting elevation map -->
-  <include file="$(find path_planning)/launch/path_smooth.launch" />
+  <!-- <include file="$(find path_planning)/launch/path_smooth.launch" /> -->
 
   <!-- Launch RViz with the demo configuration -->
   <!-- <node name="rviz" pkg="rviz" type="rviz" args="-d $(find path_planning)/rviz/rviz.rviz" /> -->
