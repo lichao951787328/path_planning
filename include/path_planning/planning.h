@@ -15,7 +15,8 @@
 // 先判断终点所在的平面，再根据连通性进行规划
 
 // #define DEBUG
-// #define SHOW_PLANNING_PROCESS
+#define SHOW_PLANNING_PROCESS
+// #define SHOW_POTENTIAL_FIELD
 struct SupportArea
 {
     double Up, Button, Left, Right;
@@ -245,7 +246,9 @@ private:
     cv::Mat full_feasible_region;
     cv::Point2f ray_Dir; // 终点像素方向
 
-    string SAPF_X, SAPF_Y;    
+    string SAPF_X, SAPF_Y;   
+
+    string experiment_path = "/home/lichao/catkin_pathplanning/src/path_planning/experiment_data/case10/"; 
 
     // 搜索参数
     nav_msgs::Path path;

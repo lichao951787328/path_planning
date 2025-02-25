@@ -16,14 +16,14 @@
   <param name="d_vort_gen" type="double" value="1.2"/>
   <param name="d_noinflu_offset_gen" type="double" value="0.4"/>
 
-  <param name="goal_obstacle_cof" type="double" value="9"/>
-  <param name="gen_obstacle_cof" type="double" value="6"/>
+  <param name="goal_obstacle_cof" type="double" value="10"/>
+  <param name="gen_obstacle_cof" type="double" value="3"/>
 
   <!-- 终点吸引力距离阈值 -->
   <param name="d_g_att" type="double" value="4"/>
   <!-- 终点吸引力系数 -->
   <!-- <param name="d_g_att_cof" type="double" value="0.25"/> -->
-  <param name="d_g_att_cof" type="double" value="0.35"/>
+  <param name="d_g_att_cof" type="double" value="0.6"/>
   
   <param name="support_ratio" type="double" value="0.55"/>
   <param name="step" type="double" value="0.4"/>
@@ -34,7 +34,7 @@
   <!-- Elevation mapping node -->
   <node pkg="path_planning" type="pcd2globalmap" name="pcd2globalmap" output="screen" />
 
-  <node name="globalmap_load" pkg="rosbag" type="play" output="screen" args="--clock --loop /home/lichao/catkin_pathplanning/src/path_planning/data/globalmap.bag" />
+  <node name="globalmap_load" pkg="rosbag" type="play" output="screen" args="--clock --loop /home/lichao/catkin_pathplanning/src/path_planning/bag/simulation_map.bag" />
 
   <!-- Launch visualizations for the resulting elevation map -->
   <!-- <include file="$(find path_planning)/launch/path_smooth.launch" /> -->

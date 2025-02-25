@@ -303,7 +303,7 @@ void PathPlanning::constructObstacleLayer(int chect_scope)
                 }
             }
             // 最大迈不高度不超过0.15
-            if (abs(max_height - min_height) < 0.13)
+            if (abs(max_height - min_height) < 0.23)
             {
                 // LOG(INFO)<<max_height<<" "<<min_height;
                 obstacle_layer.at<uchar>(i, j) = 0;
@@ -432,6 +432,11 @@ void PathPlanning::computeObstacles()
     std::vector<std::vector<cv::Point>> out_contours;
     std::vector<cv::Vec4i> out_hierarchy;
     cv::findContours(obstacle_layer, out_contours, out_hierarchy, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_NONE);
+#ifdef DEBUG
+    cv::imshow("obstacle_layer", obstacle_layer);
+    cv::waitKey(0);
+#endif
+
 
     LOG(INFO)<<"out_contours.size()"<<out_contours.size();
 
@@ -478,6 +483,15 @@ void PathPlanning::computeObstacles()
         {
             goal_obstacle = cv::Mat::zeros(obstacle_layer.size(), CV_8UC1);
             std::vector<std::vector<cv::Point>> Contours = {contour};
+
+#ifdef DEBUG
+            cv::Mat contours_image = cv::Mat::zeros(obstacle_layer.size(), CV_8UC1);
+            cv::drawContours(contours_image, Contours, -1, 255, 2);
+            cv::imshow("contours_image", contours_image);
+            cv::waitKey(0);
+#endif
+        
+
             std::vector<std::vector<cv::Point>> hullContours = {hull};
             cv::drawContours(check_image, hullContours, 0, cv::Scalar(255), cv::FILLED);
             cv::drawContours(goal_obstacle, hullContours, 0, cv::Scalar(255), cv::FILLED);
@@ -490,19 +504,36 @@ void PathPlanning::computeObstacles()
             cv::Mat hull_region = cv::Mat::zeros(obstacle_layer.size(), CV_8UC1);
             // 整个凸区域
             cv::drawContours(hull_region, hullContours, 0, cv::Scalar(255), cv::FILLED);
+
+#ifdef DEBUG
+            cv::imshow("hull_region1", hull_region);
+            cv::waitKey(0);
+#endif
+
             // 求voronoi，轨迹优化时用到
-            obstacle_layer_voronoi_goal = hull_region;
+            obstacle_layer_voronoi_goal = hull_region.clone();
 
             cv::Mat kernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(planning_param.d_safe_rad_goal * 2 + 1, planning_param.d_safe_rad_goal * 2 + 1));
             cv::Mat dilated_region;
             cv::dilate(hull_region, dilated_region, kernel);
+#ifdef DEBUG
+            cv::imshow("hull_region2", hull_region);
+            cv::waitKey(0);
+            cv::imshow("dilated_region", dilated_region);
+            cv::waitKey(0);
+#endif
+
+
             obstacle_layer_voronoi.setTo(255, dilated_region);
+
 
             // 将原始轮廓区域去除
             cv::drawContours(hull_region, Contours, 0, cv::Scalar(0), cv::FILLED);
+
+
 #ifdef DEBUG 
             LOG(INFO)<<"goal in obstacle";
-            cv::imshow("hull_region", hull_region);
+            cv::imshow("hull_region3", hull_region);
             cv::waitKey(0);
 #endif
             // 这个去除后，里面有多个不连接的区域。这里需要把每个区域分开，只考虑在终点所在的子区域
@@ -590,7 +621,7 @@ void PathPlanning::computeObstacles()
             cv::Point2f unitDir = dir / length_rect;
 
             // 计算矩形的长边方向向量，并调整长度
-            cv::Point2f longDir = unitDir * ((length_rect + extend) / 2.0);
+            cv::Point2f longDir = unitDir * ((length_rect) / 2.0);
             cv::Point longDir_int(longDir.x, longDir.y);
 
             // 计算矩形的短边方向（垂直于线段方向）
@@ -798,7 +829,7 @@ void PathPlanning::computeRepObstacleGoal()
                             map[x_obstacle_goal](index.x(), index.y()) += F_SAPF_V.y;
                             map[y_obstacle_goal](index.x(), index.y()) += F_SAPF_V.x;
                             map[obstacle_goal_flag](index.x(), index.y()) = 1;
-                            if (i%10 == 0 && inflation_radius%8 == 0)
+                            if (i%18 == 0 && inflation_radius%10 == 0)
                             {
                                 cv::Point start(pt1.x, pt1.y);
                                 cv::Point end(start.x + map[x_obstacle_goal](index.x(), index.y()) * 5, start.y + map[y_obstacle_goal](index.x(), index.y()) * 5);
@@ -906,9 +937,14 @@ void PathPlanning::computeRepObstacleGoal()
             }
         }
         LOG(INFO)<<"show goal apf";
+        matplotlibcpp::cla();
         matplotlibcpp::quiver(x_start, y_start, u, v);
         matplotlibcpp::axis("equal");  
+#ifdef SHOW_POTENTIAL_FIELD
         matplotlibcpp::show(); 
+#endif
+
+        matplotlibcpp::save(experiment_path + "goal_apf.pdf", 800);
     }
 }
 
@@ -975,7 +1011,7 @@ void PathPlanning::computeRepObstacle()
                         { 
                             map[x_sapf](index.x(), index.y()) += F_SAPF_V.y;
                             map[y_sapf](index.x(), index.y()) += F_SAPF_V.x;
-                            if (i%10 == 0 && inflation_radius%8 == 0)
+                            if (i%18 == 0 && inflation_radius%10 == 0)
                             {
                                 cv::Point start(pt1.x, pt1.y);
                                 cv::Point end(start.x + map[x_sapf](index.x(), index.y()) * 5, start.y + map[y_sapf](index.x(), index.y()) * 5);
@@ -1100,9 +1136,13 @@ void PathPlanning::computeRepObstacle()
             }
         }
 // #ifdef DEBUG
+        matplotlibcpp::cla();
         matplotlibcpp::quiver(x_start, y_start, u, v);
         matplotlibcpp::axis("equal");
+#ifdef SHOW_POTENTIAL_FIELD
         matplotlibcpp::show();
+#endif
+        matplotlibcpp::save(experiment_path + std::to_string(i) +"_gen_obsatcle.pdf", 800);
 // #endif
     }
 }
@@ -1168,7 +1208,7 @@ void PathPlanning::showSAPFMatplotlib()
     {
         for (int j = 0; j < map.getSize().y(); j++)
         {
-            if (i%10 == 0 && j%10 ==0)
+            if (i%18 == 0 && j%10 ==0)
             {
                 grid_map::Index index(i, j);
                 if (map[SAPF_X](index.x(), index.y()) != 0 || map[SAPF_Y](index.x(), index.y()) != 0)
@@ -1191,12 +1231,17 @@ void PathPlanning::showSAPFMatplotlib()
         }
     }
     LOG(INFO)<<x_start.size()<<" "<<y_start.size()<<" "<<u.size()<<" "<<v.size();
+    matplotlibcpp::cla();
     matplotlibcpp::quiver(x_start, y_start, u, v);
 
     matplotlibcpp::axis("equal");
 
     // 显示图像
+#ifdef SHOW_POTENTIAL_FIELD
     matplotlibcpp::show();
+#endif
+
+    matplotlibcpp::save(experiment_path + "obstacle_all.pdf", 800);
 }
 
 bool PathPlanning::AttPotential(Node & node, Eigen::Vector2d & AttForce)
@@ -1263,7 +1308,7 @@ void PathPlanning::showAttPotential()
     {
         for (int j = 0; j < map.getSize().y(); j++)
         {
-            if (i%10 == 0 && j%10 ==0)
+            if (i%18 == 0 && j%10 ==0)
             {
                 grid_map::Position p2;
                 if (map.getPosition(grid_map::Index(i, j), p2))
@@ -1273,7 +1318,7 @@ void PathPlanning::showAttPotential()
                     Eigen::Vector2d SAPF;
                     if (AttPotential(node, SAPF))
                     {
-                        // SAPF.normalize();
+                        SAPF.normalize();
                         x_start.emplace_back(p2.x());
                         y_start.emplace_back(p2.y());
                         u.emplace_back(SAPF.x());
@@ -1284,12 +1329,16 @@ void PathPlanning::showAttPotential()
             
         }
     }
+    matplotlibcpp::cla();
     matplotlibcpp::quiver(x_start, y_start, u, v);
 
     matplotlibcpp::axis("equal");
 
     // 显示图像
+#ifdef SHOW_POTENTIAL_FIELD
     matplotlibcpp::show();
+#endif
+    matplotlibcpp::save(experiment_path + "att.pdf", 800);
     
 }
 
@@ -1300,7 +1349,7 @@ void PathPlanning::showSAPF()
     {
         for (int j = 0; j < map.getSize().y(); j++)
         {
-            if (i%10 == 0 && j%10 ==0)
+            if (i%18 == 0 && j%10 ==0)
             {
                 grid_map::Position p2;
                 if (map.getPosition(grid_map::Index(i, j), p2))
@@ -1310,7 +1359,7 @@ void PathPlanning::showSAPF()
                     Eigen::Vector2d SAPF;
                     if (getSAPF(node, SAPF))
                     {
-                        // SAPF.normalize();
+                        SAPF.normalize(); 
                         x_start.emplace_back(p2.x());
                         y_start.emplace_back(p2.y());
                         u.emplace_back(SAPF.x());
@@ -1320,12 +1369,17 @@ void PathPlanning::showSAPF()
             }
         }
     }
+    matplotlibcpp::cla();
     matplotlibcpp::quiver(x_start, y_start, u, v);
 
     matplotlibcpp::axis("equal");
 
     // 显示图像
+#ifdef SHOW_POTENTIAL_FIELD
     matplotlibcpp::show();
+#endif
+    
+    matplotlibcpp::save(experiment_path + "SAPF.pdf", 800);
 }
 
 

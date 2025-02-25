@@ -35,7 +35,7 @@ PathSmoother::PathSmoother(cv::Mat map_img, const std::vector<Vec2d>& cv_path) {
   //transform path from cv coordinate system to OccupancyGrid coordinate system?
   for(const auto& pt : cv_path) {
     original_path_.emplace_back(pt.x(), pt.y(), 0);
-    // cv::circle(map_img_, cv::Point(pt.x(), pt.y()), 1, cv::Scalar(0,255,0), -1);
+    cv::circle(map_img_, cv::Point(pt.x(), pt.y()), 1, cv::Scalar(0,255,0), -1);
   }
 //  cv::imshow("original path", map_img_);
 //  cv::waitKey();
@@ -89,12 +89,12 @@ void PathSmoother::smoothPath() {
     iterations++;
   }
 
-  // for(const auto& po : smoothed_path_) {
-  //   std::cout<<po.x()<<" "<<po.y()<<std::endl;
-  //   cv::circle(map_img_, cv::Point(po.x(), po.y()), 1, cv::Scalar(0,0,255), -1);
-  // }
-  // cv::imshow("smoothed path", map_img_);
-  // cv::waitKey();
+  for(const auto& po : smoothed_path_) {
+    std::cout<<po.x()<<" "<<po.y()<<std::endl;
+    cv::circle(map_img_, cv::Point(po.x(), po.y()), 1, cv::Scalar(0,0,255), -1);
+  }
+  cv::imshow("smoothed path", map_img_);
+  cv::waitKey();
 }
 
 Vec2d PathSmoother::obstacleTerm(Vec2d xi) {

@@ -6,7 +6,7 @@ namespace Constants {
     static const int max_iterations = 200;
 
     /// [m] --- The minimum turning radius of the vehicle
-    static const float min_turn_radius = 6;
+    static const float min_turn_radius = 12;
 
     /// [m] --- The minimum width of a safe road for the vehicle at hand
     static const float minRoadWidth = 2;

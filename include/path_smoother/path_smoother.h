@@ -47,9 +47,9 @@ private:
 
     /// falloff rate for the voronoi field
     float alpha_ = 0.1;
-    float wObstacle_ = 0.2;
+    float wObstacle_ = 1;
     float wVoronoi_ = 0.2;
-    float wCurvature_ = 0.2;
+    float wCurvature_ = 1;
     float wSmoothness_ = 0.2;
 
     DynamicVoronoi voronoi_;
