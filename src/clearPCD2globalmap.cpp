@@ -10,17 +10,21 @@
 #include <rosbag/bag.h>
 #include <ros/ros.h>
 #include <opencv2/opencv.hpp>
+#include <ros/package.h>
 using namespace std;
 // 这是一个点云预处理程序，用于将全局地图中的点云进行滤波和分割，提取出平面部分，并将平面部分高度小于5cm的点删除。
 // 后续再去cloudcompare里将点云中的一些噪点删除
 int main(int argc, char **argv)
 {
     ros::init(argc, argv, "clearPCD2globalmap");
+
+    std::string package_path = ros::package::getPath("path_planning");
+    std::cout << "Package path: " << package_path << std::endl;
     ros::NodeHandle nh;
     ros::Publisher map_pub = nh.advertise<grid_map_msgs::GridMap>("/globalmap", 1);
     pcl::PointCloud<pcl::PointXYZ> pointcloud;
     // 修过的点云
-    pcl::io::loadPCDFile("/home/lichao/catkin_pathplanning/src/path_planning/data/clearPCD.pcd", pointcloud);
+    pcl::io::loadPCDFile(package_path + "/data/globalmap1.pcd", pointcloud);
 
     Eigen::Vector4f centroid;
     pcl::compute3DCentroid(pointcloud, centroid);
@@ -82,7 +86,7 @@ int main(int argc, char **argv)
 
     grid_map::GridMapCvConverter::toImage<unsigned char, 3>(global_map, height_layer, CV_8UC3, minValue, maxValue,originalImage);
 
-    mask = cv::imread("/home/lichao/catkin_pathplanning/src/path_planning/data/mask_inpaint.png", cv::IMREAD_GRAYSCALE);
+    mask = cv::imread(package_path + "/data/mask1.png", cv::IMREAD_GRAYSCALE);
     if (mask.channels() > 1) 
     {
         cv::cvtColor(mask, mask, cv::COLOR_BGR2GRAY);
@@ -113,7 +117,7 @@ int main(int argc, char **argv)
     grid_map::GridMapRosConverter::toMessage(global_map, globalmap_msg);
     globalmap_msg.info.header.frame_id = "globalmap";
 
-    if (grid_map::GridMapRosConverter::saveToBag(global_map, "/home/lichao/catkin_pathplanning/src/path_planning/data/globalmap.bag", "global_map"))
+    if (grid_map::GridMapRosConverter::saveToBag(global_map, package_path + "/data/globalmap.bag", "global_map"))
     {
         LOG(INFO)<<"save global map success.";
         // return true;

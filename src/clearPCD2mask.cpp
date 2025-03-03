@@ -1,3 +1,11 @@
+/*
+ * @Author: lichao951787328 951787328@qq.com
+ * @Date: 2025-02-21 09:23:36
+ * @LastEditors: lichao951787328 951787328@qq.com
+ * @LastEditTime: 2025-03-03 09:38:07
+ * @FilePath: /path_planning/src/clearPCD2mask.cpp
+ * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
+ */
 #include <pcl/io/pcd_io.h>
 #include <pcl/point_types.h>
 #include <pcl/common/centroid.h>
@@ -6,13 +14,18 @@
 #include <grid_map_core/GridMap.hpp>
 #include <grid_map_cv/grid_map_cv.hpp>
 #include <opencv2/opencv.hpp>
+#include <ros/package.h>
+#include <ros/ros.h>
 using namespace std;
 // 使用得到的点云创建一个mask，这个mask是高程图中为nan的点，后续需要手动筛选出那些地面点，对剩余的点进行inpaint
 int main(int argc, char **argv)
 {
+    ros::init(argc, argv, "clearPCD2mask");
+    std::string package_path = ros::package::getPath("path_planning");
+    std::cout << "Package path: " << package_path << std::endl;
     pcl::PointCloud<pcl::PointXYZ> pointcloud;
     // 修过的点云
-    pcl::io::loadPCDFile("/home/lichao/catkin_pathplanning/src/path_planning/data/clearPCD.pcd", pointcloud);
+    pcl::io::loadPCDFile(package_path + "/data/globalmap1.pcd", pointcloud);
 
 
     // 原始点云
@@ -73,7 +86,7 @@ int main(int argc, char **argv)
     cv::Mat mask;
     grid_map::GridMapCvConverter::toImage<unsigned char, 1>(global_map, "inpaint_mask", CV_8UC1, mask);
     cv::imshow("mask", mask);
-    cv::imwrite("/home/lichao/catkin_pathplanning/src/path_planning/data/mask.png", mask);
+    cv::imwrite(package_path + "/data/mask1.png", mask);
     cv::waitKey(0);
 
     return 0;

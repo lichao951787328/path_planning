@@ -346,7 +346,7 @@ void PathPlanning::constructObstacleLayer(int chect_scope)
             }
         }
         // 最大迈不高度不超过0.15
-        if (abs(max_height - min_height) < 0.3)
+        if (abs(max_height - min_height) < 0.12)
         {
             // LOG(INFO)<<max_height<<" "<<min_height;
             obstacle_layer.at<uchar>(cv_point.y, cv_point.x) = 0;
@@ -2537,7 +2537,8 @@ void PathPlanning::mergeAllObstacle()
     // }
     // LOG(INFO)<<"OKKK";
 }
-plan
+
+
 void PathPlanning::showSAPFMatplotlib()
 {
     std::vector<double> x_start, y_start, u, v;

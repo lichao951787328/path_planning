@@ -163,6 +163,59 @@ void PathPlanningPipline::globalmapCallback(const grid_map_msgs::GridMap::ConstP
     }
 }
 
+// 计算 yaw 角（弧度制）
+double computeYaw(const geometry_msgs::PoseStamped& p1, const geometry_msgs::PoseStamped& p2) {
+    return atan2(p2.pose.position.y - p1.pose.position.y, 
+                 p2.pose.position.x - p1.pose.position.x);
+}
+
+// 线性插值路径，考虑 yaw 角
+nav_msgs::Path densifyPathWithYaw(const nav_msgs::Path& sparse_path, double resolution) 
+{
+    nav_msgs::Path dense_path;
+    dense_path.header = sparse_path.header;
+
+    for (size_t i = 0; i < sparse_path.poses.size() - 1; ++i) 
+    {
+        geometry_msgs::PoseStamped p1 = sparse_path.poses[i];
+        geometry_msgs::PoseStamped p2 = sparse_path.poses[i + 1];
+
+        double dx = p2.pose.position.x - p1.pose.position.x;
+        double dy = p2.pose.position.y - p1.pose.position.y;
+        double dist = std::sqrt(dx * dx + dy * dy);
+
+        // 计算 yaw
+        double yaw1 = tf::getYaw(p1.pose.orientation);
+        double yaw2 = tf::getYaw(p2.pose.orientation);
+        
+        // 计算需要插入的点数
+        int num_points = std::ceil(dist / resolution);
+
+        for (int j = 0; j <= num_points; ++j) {
+            geometry_msgs::PoseStamped p;
+            p.header = p1.header;
+
+            // 线性插值位置
+            double alpha = static_cast<double>(j) / num_points;
+            p.pose.position.x = p1.pose.position.x + alpha * dx;
+            p.pose.position.y = p1.pose.position.y + alpha * dy;
+
+            // 线性插值 yaw 角（避免角度跳变）
+            double yaw_interp = yaw1 + alpha * (yaw2 - yaw1);
+            tf::Quaternion q;
+            q.setRPY(0, 0, yaw_interp);
+            p.pose.orientation.x = q.x();
+            p.pose.orientation.y = q.y();
+            p.pose.orientation.z = q.z();
+            p.pose.orientation.w = q.w();
+
+            dense_path.poses.push_back(p);
+        }
+    }
+    return dense_path;
+}
+
+
 // 起点终点都是相对于点云地图的，要转到全局地形地图坐标系下
 void PathPlanningPipline::GoalCallback(const geometry_msgs::PoseStamped::Ptr msg)
 {
@@ -281,9 +334,14 @@ void PathPlanningPipline::GoalCallback(const geometry_msgs::PoseStamped::Ptr msg
         pose_stamped.pose.orientation = tf::createQuaternionMsgFromYaw(smooth_path_yaw.at(i));
         smooth_path.poses.emplace_back(pose_stamped);
     }
-    smooth_path.header.frame_id = globalmap_frame_id;
-    smooth_path_pub.publish(smooth_path);
 
+    // 将稀疏的path转为稠密的path
+    smooth_path.header.frame_id = globalmap_frame_id;
+    nav_msgs::Path dense_path = densifyPathWithYaw(smooth_path, globalmap.getResolution());
+    cout<<"dense_path size: "<<dense_path.poses.size()<<endl;
+    
+    smooth_path_pub.publish(dense_path);
+    LOG(INFO)<<"publish smooth path";
     visualization_msgs::MarkerArray marker_array = convertPath2visualmsgs(smooth_path);
     path_marker_pub.publish(marker_array);
 }

@@ -15,7 +15,7 @@
 // 先判断终点所在的平面，再根据连通性进行规划
 
 // #define DEBUG
-#define SHOW_PLANNING_PROCESS
+// #define SHOW_PLANNING_PROCESS
 // #define SHOW_POTENTIAL_FIELD
 struct SupportArea
 {
@@ -248,7 +248,7 @@ private:
 
     string SAPF_X, SAPF_Y;   
 
-    string experiment_path = "/home/lichao/catkin_pathplanning/src/path_planning/experiment_data/case10/"; 
+    string experiment_path; 
 
     // 搜索参数
     nav_msgs::Path path;

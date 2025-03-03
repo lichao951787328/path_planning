@@ -32,7 +32,7 @@ PathPlanning::PathPlanning(grid_map::GridMap & map_, Eigen::Vector3d & start, Ei
     initial_package_path("path_planning", package_path);
     LOG(INFO)<<"package path is: "<<package_path;
     pd.initial(package_path + "/config/plane_fitter_pcd.ini");
-
+    experiment_path = package_path + "/experiment_data/steps/";
     LOG(INFO)<<start_.transpose();
     LOG(INFO)<<goal_.transpose();
     
@@ -303,7 +303,7 @@ void PathPlanning::constructObstacleLayer(int chect_scope)
                 }
             }
             // 最大迈不高度不超过0.15
-            if (abs(max_height - min_height) < 0.23)
+            if (abs(max_height - min_height) < 0.12)
             {
                 // LOG(INFO)<<max_height<<" "<<min_height;
                 obstacle_layer.at<uchar>(i, j) = 0;

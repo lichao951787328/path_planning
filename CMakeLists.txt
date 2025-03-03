@@ -186,6 +186,8 @@ add_executable(clearPCD2globalmap src/clearPCD2globalmap.cpp)
 
 
 add_executable(bagTransform src/transform_bag.cpp)
+
+add_executable(clearPCD2mask src/clearPCD2mask.cpp)
 ## Rename C++ executable without prefix
 ## The above recommended prefix causes long target names, the following renames the
 ## target back to the shorter version for ease of user use
@@ -225,6 +227,14 @@ target_link_libraries(test_gridmap
 target_link_libraries(path_smoother
 ${catkin_LIBRARIES}
 ${OpenCV_LIBRARIES}
+glog::glog
+)
+
+target_link_libraries(
+  clearPCD2mask
+  ${PCL_IO_LIBRARIES}
+  ${OpenCV_LIBRARIES}
+  ${catkin_LIBRARIES}
 glog::glog
 )
 
